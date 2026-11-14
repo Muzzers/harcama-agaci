@@ -27,6 +27,7 @@ export class Universe {
     this.viewport = stage.querySelector('.viewport');
     this.world = stage.querySelector('.world');
     this.svg = stage.querySelector('.tethers');
+    this.labelLayer = stage.querySelector('.labels');
     this.nodes = new Map();
     this.expanded = true;
     this.zoom = 1;
@@ -78,6 +79,7 @@ export class Universe {
   }
 
   resetView(animate = true) {
+    this.userView = false;
     this.zoom = 1;
     this.panX = 0;
     this.panY = 0;
@@ -111,7 +113,7 @@ export class Universe {
 
     const spacingR = n > 1 ? (maxCatD + 12) / (2 * Math.sin(Math.PI / n)) : 0;
     const R1 = Math.max(coreD / 2 + 20 + maxCatD / 2, spacingR);
-    const aspect = clamp(this.h / this.w, 1, 1.5);
+    const aspect = clamp(this.h / this.w, 1, 1.75);
 
     let extX = coreD / 2;
     let extY = coreD / 2;
@@ -132,12 +134,9 @@ export class Universe {
       node.ay = ay;
       node.el.style.setProperty('--c', c.color);
       if (node.line) node.line.style.stroke = c.color;
-      const p = c.limit > 0 ? c.total / c.limit : 0;
-      node.el.classList.toggle('over', c.limit > 0 && c.total > c.limit);
-      node.el.classList.toggle('near', p >= 0.8 && p <= 1);
       node.el.classList.toggle('empty', c.total === 0);
-      node.el.setAttribute('aria-label', `${c.name}: ${moneyShort(c.total)}${c.limit ? ` / ${moneyShort(c.limit)}` : ''}`);
-      this.setHTML(node, this.catHTML(c, p, d));
+      node.el.setAttribute('aria-label', `${c.name}: ${moneyShort(c.total)}`);
+      this.setHTML(node, this.catHTML(c, d));
       seen.add(key);
       grow(ax, ay, d / 2);
 
@@ -166,21 +165,25 @@ export class Universe {
         child.el.style.setProperty('--c', c.color);
         if (child.line) child.line.style.stroke = c.color;
         if (it.type === 'exp') {
-          child.el.classList.toggle('big', it.d >= 46);
           child.el.setAttribute('aria-label', `${it.data.title}: ${moneyShort(it.data.amount)}`);
-          this.setHTML(child, `<span class="exp-amt">${esc(moneyShort(it.data.amount))}</span><span class="exp-title">${esc(it.data.title)}</span>`);
+          this.setHTML(child, `<span class="exp-amt">${esc(moneyShort(it.data.amount))}</span>`);
+          this.setLabel(child, it.data.title);
         } else {
           child.el.setAttribute('aria-label', `${it.data.count} harcama daha`);
           this.setHTML(child, `<span>+${it.data.count}</span>`);
         }
         seen.add(it.key);
         grow(ax + child.ox, ay + child.oy, it.d / 2);
+        if (it.type === 'exp') {
+          extX = Math.max(extX, Math.abs(ax + child.ox) + 34);
+          extY = Math.max(extY, Math.abs(ay + child.oy) + it.d / 2 + 14);
+        }
       });
     });
 
     for (const node of this.nodes.values()) if (!seen.has(node.key)) this.kill(node);
 
-    this.fit = Math.min(1.1, (this.w / 2 - 8) / extX, (this.h / 2 - 8) / extY);
+    this.fit = Math.min(1.1, (this.w / 2 - 6) / extX, (this.h / 2 - 6) / extY);
     this.applyView();
     this.render(); // ilk kare beklenmeden konumlar yerinde olsun
     this.kick();
@@ -198,10 +201,10 @@ export class Universe {
       <div class="core-sub">${esc(moneyInt(c.spent))} / ${esc(moneyInt(c.free))}</div>`;
   }
 
-  catHTML(c, p, d) {
-    return `${c.limit > 0 ? ring(p) : ''}
+  catHTML(c, d) {
+    return `
       <span class="cat-icon">${catIcon(c.icon)}</span>
-      ${d >= 52 ? `<span class="cat-name">${esc(c.name)}</span>` : ''}
+      <span class="cat-name">${esc(c.name)}</span>
       <span class="cat-amt">${esc(c.total > 0 ? moneyShort(c.total) : '—')}</span>`;
   }
 
@@ -234,6 +237,16 @@ export class Universe {
     n.ts = 1;
     n.el.classList.remove('dying');
     return n;
+  }
+
+  /** Baloncuğun altında duran ad etiketi (küçük baloncuklarda da okunsun diye dışarıda). */
+  setLabel(n, text) {
+    if (!n.label) {
+      n.label = document.createElement('span');
+      n.label.className = 'bubble-label';
+      this.labelLayer.append(n.label);
+    }
+    if (n.label.textContent !== text) n.label.textContent = text;
   }
 
   setSize(n, d) {
@@ -273,6 +286,7 @@ export class Universe {
     const sub = 2;
     let energy = 0;
     for (let i = 0; i < sub; i++) energy = this.step(dt / sub);
+    this.autoFit();
     this.render();
 
     const dragging = this.gesture?.node?.dragging;
@@ -331,7 +345,8 @@ export class Universe {
           const b = live[j];
           const dx = b.x - a.x;
           const dy = b.y - a.y;
-          const min = (a.d * a.s + b.d * b.s) / 2 + 3;
+          // Altında ad etiketi olan harcamalara biraz daha yer bırak
+          const min = (a.d * a.s + b.d * b.s) / 2 + 3 + (a.type === 'exp' ? 10 : 0) + (b.type === 'exp' ? 10 : 0);
           const d2 = dx * dx + dy * dy;
           if (d2 >= min * min) continue;
           const dist = Math.sqrt(d2) || 0.01;
@@ -359,12 +374,33 @@ export class Universe {
       if (n.dead && n.s < 0.04) {
         n.el.remove();
         n.line?.remove();
+        n.label?.remove();
         this.nodes.delete(n.key);
       } else if (n.dead) {
         energy = Math.max(energy, 10);
       }
     }
     return energy;
+  }
+
+  /** Kullanıcı yakınlaştırmadıysa, baloncukların gerçek konumuna göre ekrana sığdır. */
+  autoFit() {
+    if (this.userView || !this.expanded) return;
+    let extX = 1;
+    let extY = 1;
+    for (const n of this.nodes.values()) {
+      if (n.dead || n.s < 0.5) continue;
+      const r = (n.d * n.s) / 2;
+      const labelW = n.label ? 44 : 0;
+      const labelH = n.label ? 14 : 0;
+      extX = Math.max(extX, Math.abs(n.x) + Math.max(r, labelW));
+      extY = Math.max(extY, Math.abs(n.y) + r + labelH);
+    }
+    const target = Math.min(1.1, (this.w / 2 - 6) / extX, (this.h / 2 - 6) / extY);
+    if (Math.abs(target - this.fit) > 0.002) {
+      this.fit += (target - this.fit) * 0.12;
+      this.applyView();
+    }
   }
 
   invMass(n) {
@@ -378,6 +414,18 @@ export class Universe {
       if (t !== n.t) {
         n.t = t;
         n.el.style.transform = t;
+      }
+      if (n.label) {
+        const lt = `translate3d(${n.x.toFixed(1)}px,${(n.y + (n.d * n.s) / 2 + 2).toFixed(1)}px,0) translateX(-50%)`;
+        if (lt !== n.lt) {
+          n.lt = lt;
+          n.label.style.transform = lt;
+        }
+        const lo = n.dead || !this.expanded ? '0' : Math.min(1, Math.max(0, (n.s - 0.5) * 2)).toFixed(2);
+        if (lo !== n.lo) {
+          n.lo = lo;
+          n.label.style.opacity = lo;
+        }
       }
       if (n.line && n.parent) {
         n.line.setAttribute('x1', n.parent.x.toFixed(1));
@@ -397,6 +445,8 @@ export class Universe {
 
   applyView(animate = false) {
     this.viewport.classList.toggle('animate', animate);
+    // Yazılar uzaklaşınca küçülüp okunmaz olmasın
+    this.viewport.style.setProperty('--inv', (1 / this.scale).toFixed(3));
     this.viewport.style.transform = `translate(${(this.w / 2 + this.panX).toFixed(1)}px,${(this.h / 2 + this.panY).toFixed(1)}px) scale(${this.scale.toFixed(4)})`;
     if (animate) setTimeout(() => this.viewport.classList.remove('animate'), 450);
   }
@@ -479,6 +529,7 @@ export class Universe {
       if (this.pinch && this.pointers.size >= 2) {
         const [p1, p2] = [...this.pointers.values()];
         const d = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+        this.userView = true;
         this.zoom = clamp((this.pinch.z0 * d) / this.pinch.d0, 0.5, 3.5);
         const r = this.pinch.rect;
         const mx = (p1.x + p2.x) / 2 - r.left;
@@ -522,6 +573,7 @@ export class Universe {
         g.lastT = now;
         this.kick();
       } else {
+        this.userView = true;
         this.panX = g.pan0.x + dx;
         this.panY = g.pan0.y + dy;
         this.applyView();
@@ -571,6 +623,7 @@ export class Universe {
       'wheel',
       (e) => {
         e.preventDefault();
+        this.userView = true;
         const world = this.toWorld(e.clientX, e.clientY);
         this.zoom = clamp(this.zoom * Math.exp(-e.deltaY * 0.0015), 0.5, 3.5);
         const r = st.getBoundingClientRect();

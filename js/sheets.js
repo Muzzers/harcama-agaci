@@ -1,12 +1,21 @@
-import { uid, PALETTE, exportJSON, importJSON, freshState } from './store.js';
+import { uid, PALETTE, exportJSON, importJSON, freshState, salaryFor, setSalary, removeSalaryChange } from './store.js';
 import { categorize, learn, normalize } from './categorizer.js';
 import { parseAmount, parseQuick, parseStatement } from './parser.js';
-import { inPeriod, isCurrent, periodLabel } from './period.js';
+import { inPeriod, isCurrent, periodLabel, periodName, shiftPeriod, daysElapsed, totalDays } from './period.js';
 import { money, moneyShort, amountInput, toDateInput, fromDateInput, dayLabel, shortDate, timeLabel } from './format.js';
 import { h, esc, openSheet, toast, confirmButton, ICON } from './ui.js';
 import { catIcon, ICON_KEYS } from './icons.js';
+import { compress, putReceipt, getReceipt, deleteReceipt, showReceipt } from './receipts.js';
 
 const byId = (list, id) => list.find((x) => x.id === id);
+
+const fmtMonthYear = new Intl.DateTimeFormat('tr-TR', { month: 'long', year: 'numeric' });
+/** '2027-01' → 'Ocak 2027 dönemi' */
+function monthLabel(key) {
+  const [y, m] = key.split('-').map(Number);
+  const t = fmtMonthYear.format(new Date(y, m - 1, 1));
+  return t.charAt(0).toLocaleUpperCase('tr-TR') + t.slice(1) + ' dönemi';
+}
 
 function catChips(categories, selectedId, { auto = false } = {}) {
   return categories
@@ -27,9 +36,48 @@ function defaultDateFor(period) {
 function expenseRow(e, cat) {
   return `<button type="button" class="row" data-exp="${e.id}">
     <span class="row-icon" style="--c:${cat?.color || '#8E8E93'}">${catIcon(cat?.icon || 'dots')}</span>
-    <span class="row-main"><b>${esc(e.title)}</b><small>${esc(cat?.name || '')} · ${esc(shortDate(e.date))} ${esc(timeLabel(e.date))}</small></span>
+    <span class="row-main"><b>${esc(e.title)}</b><small>${esc(cat?.name || '')} · ${esc(shortDate(e.date))} ${esc(timeLabel(e.date))}${e.receipt ? ' · fişli' : ''}</small></span>
     <span class="row-amt">${esc(money(e.amount))}</span>
   </button>`;
+}
+
+/** Fiş seçme alanı: { el, get(), set(dataUrl|null) } */
+function receiptField({ onPick, onRemove } = {}) {
+  const el = h(`<div class="receipt-field">
+      <button type="button" class="receipt-thumb" hidden aria-label="Fişi büyüt"><img alt=""></button>
+      <label class="secondary receipt-pick">${ICON.camera}<span>Fiş fotoğrafı ekle</span><input type="file" accept="image/*" hidden></label>
+      <button type="button" class="link receipt-remove" hidden>Fişi kaldır</button>
+    </div>`);
+  let current = null;
+  const thumb = el.querySelector('.receipt-thumb');
+  const set = (url) => {
+    current = url;
+    thumb.hidden = !url;
+    if (url) thumb.querySelector('img').src = url;
+    el.querySelector('.receipt-pick span').textContent = url ? 'Fişi değiştir' : 'Fiş fotoğrafı ekle';
+    el.querySelector('.receipt-remove').hidden = !url;
+  };
+  thumb.addEventListener('click', () => current && showReceipt(current));
+  el.querySelector('input').addEventListener('change', async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    const span = el.querySelector('.receipt-pick span');
+    span.textContent = 'Hazırlanıyor…';
+    try {
+      const url = await compress(file);
+      set(url);
+      onPick?.(url);
+    } catch (err) {
+      set(current);
+      toast(err.message || 'Fotoğraf eklenemedi', 'bad');
+    }
+  });
+  el.querySelector('.receipt-remove').addEventListener('click', () => {
+    set(null);
+    onRemove?.();
+  });
+  return { el, get: () => current, set };
 }
 
 function incomeRow(i) {
@@ -91,6 +139,8 @@ export function openAddSheet(ctx, { categoryId = null, mode = 'expense' } = {}) 
       <div class="label-row"><span>Kategori</span><span class="badge"></span></div>
       <div class="chips cats">${catChips(cats, null)}</div>
 
+      <div class="receipt-slot"></div>
+
       ${recent.length ? `<div class="label-row"><span>Son eklenenler</span></div>
       <div class="chips recent">${recent
         .map((e) => `<button type="button" class="chip ghost" data-recent="${e.id}">${esc(e.title)} <small>${esc(moneyShort(e.amount))}</small></button>`)
@@ -106,6 +156,8 @@ export function openAddSheet(ctx, { categoryId = null, mode = 'expense' } = {}) 
   const dateIn = $('[name=date]');
   const submit = $('button[type=submit]');
   dateIn.value = toDateInput(defaultDateFor(ctx.period()));
+  const receipt = receiptField();
+  $('.receipt-slot').append(receipt.el);
 
   const read = () => {
     const q = parseQuick(titleIn.value);
@@ -195,8 +247,9 @@ export function openAddSheet(ctx, { categoryId = null, mode = 'expense' } = {}) 
     }
     const cat = r.chosen;
     const shouldLearn = manualId && cat && r.suggested?.id !== cat.id;
-    const exp = { id: uid(), title: r.title, amount: r.amount, date: date.toISOString(), categoryId: cat?.id || null };
-    const before = cat ? catTotalInPeriodOf(ctx, cat.id, date) : 0;
+    const photo = receipt.get();
+    const exp = { id: uid(), title: r.title, amount: r.amount, date: date.toISOString(), categoryId: cat?.id || null, ...(photo ? { receipt: true } : {}) };
+    if (photo) putReceipt(exp.id, photo, ctx.account).catch(() => toast('Fiş buluta yüklenemedi; telefonda saklandı', 'bad'));
 
     ctx.commit(
       (s) => {
@@ -207,12 +260,7 @@ export function openAddSheet(ctx, { categoryId = null, mode = 'expense' } = {}) 
     );
     sheet.close();
 
-    const after = before + r.amount;
-    if (cat && cat.limit > 0 && after > cat.limit && before <= cat.limit) {
-      toast(`${cat.name} limiti aşıldı (${moneyShort(after)} / ${moneyShort(cat.limit)})`, 'bad');
-    } else {
-      toast(`${r.title} → ${cat?.name || 'eklendi'}`);
-    }
+    toast(`${r.title} → ${cat?.name || 'eklendi'}`);
   });
 
   const sheet = openSheet({ title: 'Hızlı Ekle', body });
@@ -221,12 +269,6 @@ export function openAddSheet(ctx, { categoryId = null, mode = 'expense' } = {}) 
   return sheet;
 }
 
-function catTotalInPeriodOf(ctx, catId, date) {
-  const p = ctx.period();
-  const period = inPeriod(date, p) ? p : null;
-  if (!period) return 0;
-  return ctx.state.expenses.filter((e) => e.categoryId === catId && inPeriod(e.date, period)).reduce((s, e) => s + e.amount, 0);
-}
 
 // =====================================================================
 // Harcama düzenle
@@ -247,11 +289,38 @@ export function openExpenseSheet(ctx, id) {
       </div>
       <div class="label-row"><span>Kategori</span><span class="badge"></span></div>
       <div class="chips cats">${catChips(cats, catId)}</div>
+      <div class="receipt-slot"></div>
       <button class="primary" type="submit">Kaydet</button>
       <button class="danger-btn" type="button">${ICON.trash}<span>Harcamayı sil</span></button>
     </form>`);
 
   const $ = (s) => body.querySelector(s);
+  const receipt = receiptField({
+    onPick: async (url) => {
+      try {
+        await putReceipt(id, url, ctx.account);
+        toast('Fiş eklendi');
+      } catch {
+        toast('Fiş buluta yüklenemedi; telefonda saklandı', 'bad');
+      }
+      ctx.commit((s) => {
+        const t = byId(s.expenses, id);
+        if (t) t.receipt = true;
+      });
+    },
+    onRemove: () => {
+      deleteReceipt(id, ctx.account);
+      ctx.commit((s) => {
+        const t = byId(s.expenses, id);
+        if (t) delete t.receipt;
+      });
+      toast('Fiş kaldırıldı');
+    },
+  });
+  $('.receipt-slot').append(receipt.el);
+  if (exp.receipt) {
+    getReceipt(id, ctx.account).then((url) => url && receipt.set(url));
+  }
   $('.cats').addEventListener('click', (e) => {
     const chip = e.target.closest('.chip');
     if (!chip) return;
@@ -285,6 +354,7 @@ export function openExpenseSheet(ctx, id) {
   });
 
   confirmButton($('.danger-btn'), 'Silmek için tekrar dokun', () => {
+    if (exp.receipt) deleteReceipt(id, ctx.account);
     ctx.commit((s) => {
       s.expenses = s.expenses.filter((x) => x.id !== id);
     });
@@ -392,26 +462,15 @@ export function openCategorySheet(ctx, id) {
     const list = ctx.state.expenses.filter((e) => e.categoryId === id && inPeriod(e.date, period)).sort((a, b) => new Date(b.date) - new Date(a.date));
     const total = list.reduce((s, e) => s + e.amount, 0);
     const allSpent = ctx.state.expenses.filter((e) => inPeriod(e.date, period)).reduce((s, e) => s + e.amount, 0);
-    const p = cat.limit > 0 ? total / cat.limit : 0;
-    const state = cat.limit <= 0 ? '' : p > 1 ? 'bad' : p >= 0.8 ? 'warn' : 'good';
-    const status =
-      cat.limit <= 0
-        ? 'Limit yok'
-        : p > 1
-          ? `${money(total - cat.limit)} aşıldı`
-          : `${money(cat.limit - total)} kaldı`;
 
     body.innerHTML = `
       <div class="cat-hero" style="--c:${cat.color}">
         <span class="cat-hero-icon">${catIcon(cat.icon)}</span>
         <div>
           <div class="cat-hero-total">${esc(money(total))}</div>
-          <div class="cat-hero-sub">${cat.limit > 0 ? `/ ${esc(money(cat.limit))} · ` : ''}${allSpent > 0 ? `harcamanın %${Math.round((total / allSpent) * 100)}'i` : periodLabel(period)}</div>
+          <div class="cat-hero-sub">${esc(periodLabel(period))}${allSpent > 0 ? ` · harcamanın %${Math.round((total / allSpent) * 100)}'i` : ''}</div>
         </div>
       </div>
-      ${cat.limit > 0 ? `<div class="meter ${state}"><i style="width:${Math.min(100, p * 100).toFixed(1)}%"></i></div>` : ''}
-      <p class="status ${state}">${esc(status)}</p>
-      <label class="field money-field limit-top"><span class="lbl">Aylık limit</span><span class="prefix">₺</span><input name="limit" inputmode="decimal" value="${esc(amountInput(cat.limit))}" placeholder="Limitsiz" enterkeyhint="done"></label>
 
       <button class="secondary add-here" type="button">${ICON.plus}<span>${esc(cat.name)} harcaması ekle</span></button>
 
@@ -444,8 +503,6 @@ export function openCategorySheet(ctx, id) {
       if (b) upd((c) => (c.icon = b.dataset.icon));
     });
     $('[name=name]').addEventListener('change', (e) => upd((c) => (c.name = e.target.value.trim() || c.name)));
-    $('[name=limit]').addEventListener('change', (e) => upd((c) => (c.limit = parseAmount(e.target.value) || 0)));
-    $('[name=limit]').addEventListener('keydown', (e) => e.key === 'Enter' && e.target.blur());
     $('.swatches').addEventListener('click', (e) => {
       const b = e.target.closest('.swatch');
       if (b) upd((c) => (c.color = b.dataset.color));
@@ -560,8 +617,9 @@ export function openBudgetSheet(ctx) {
       <div class="budget-hero"></div>
       <section class="group">
         <h3>Gelir</h3>
-        <label class="field money-field"><span class="lbl">Aylık net maaş</span><span class="prefix">₺</span>
+        <label class="field money-field"><span class="lbl salary-lbl">Aylık net maaş</span><span class="prefix">₺</span>
           <input name="salary" inputmode="decimal" placeholder="0" enterkeyhint="done"></label>
+        <div class="salary-history"></div>
         <div class="list incomes"></div>
         <button class="secondary wide add-inc" type="button">${ICON.plus}<span>Ek gelir ekle</span></button>
       </section>
@@ -588,14 +646,30 @@ export function openBudgetSheet(ctx) {
         <span>Sabit giderler</span><b>${c.fixedTotal ? '−' : ''}${esc(money(c.fixedTotal))}</b>
         <span>Harcamalar</span><b>${c.spent ? '−' : ''}${esc(money(c.spent))}</b>
       </div>`;
-    if (document.activeElement !== salaryIn) salaryIn.value = amountInput(ctx.state.settings.salary);
+    if (document.activeElement !== salaryIn) salaryIn.value = amountInput(c.salary);
+    const hist = ctx.state.settings.salaryHistory || [];
+    const changed = hist.filter((x) => x.amount > 0).length > 1 || hist.some((x) => x.from !== '0000-00');
+    $('.salary-lbl').textContent = changed ? `Aylık net maaş · ${periodName(p)} dönemi` : 'Aylık net maaş';
+    $('.salary-history').innerHTML = changed
+      ? `<div class="hist">${hist
+          .map(
+            (x) => `<div class="hist-row ${x.from <= p.key && !hist.some((y) => y.from > x.from && y.from <= p.key) ? 'on' : ''}">
+              <span>${x.from === '0000-00' ? 'İlk maaş' : `${esc(monthLabel(x.from))} itibarıyla`}</span><b>${esc(money(x.amount))}</b>
+              ${x.from === '0000-00' ? '' : `<button type="button" class="icon-btn small" data-hist="${x.from}" aria-label="Bu değişikliği sil">${ICON.close}</button>`}
+            </div>`
+          )
+          .join('')}</div>`
+      : '<p class="hint">Maaşın değişirse (zam gibi) buraya yeni tutarı yaz; değişiklik bu dönemden itibaren geçerli olur, eski dönemler etkilenmez.</p>';
     $('.incomes').innerHTML = incs.length ? incs.map(incomeRow).join('') : '<p class="empty small">Bu dönemde ek gelir yok (ikramiye, ek ders, iade…).</p>';
   };
 
   salaryIn.addEventListener('change', () => {
-    const v = parseAmount(salaryIn.value);
-    ctx.commit((s) => (s.settings.salary = v || 0));
-    toast('Maaş kaydedildi');
+    const v = parseAmount(salaryIn.value) || 0;
+    const p = ctx.period();
+    const hadSalary = (ctx.state.settings.salaryHistory || []).some((x) => x.amount > 0);
+    if (v === salaryFor(ctx.state, p.key)) return;
+    ctx.commit((s) => setSalary(s, p.key, v));
+    toast(hadSalary ? `Maaş ${periodName(p)} döneminden itibaren ${money(v)}` : 'Maaş kaydedildi');
   });
   salaryIn.addEventListener('keydown', (e) => e.key === 'Enter' && salaryIn.blur());
   $('.incomes').addEventListener('click', (e) => {
@@ -603,6 +677,10 @@ export function openBudgetSheet(ctx) {
     if (r) ctx.open.income(r.dataset.inc);
   });
   $('.add-inc').addEventListener('click', () => ctx.open.add({ mode: 'income' }));
+  $('.salary-history').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-hist]');
+    if (b) ctx.commit((s) => removeSalaryChange(s, b.dataset.hist));
+  });
   const drawFixed = fixedEditor(ctx, $('.fixed'));
 
   const unsubscribe = ctx.subscribe(() => {
@@ -611,6 +689,90 @@ export function openBudgetSheet(ctx) {
   });
   draw();
   return openSheet({ title: 'Bütçe', body, onClose: unsubscribe, className: 'tall' });
+}
+
+// =====================================================================
+// Dönem özeti
+// =====================================================================
+
+function periodStats(ctx, p) {
+  const st = ctx.state;
+  const exps = st.expenses.filter((e) => inPeriod(e.date, p));
+  const incs = (st.incomes || []).filter((i) => inPeriod(i.date, p));
+  const salary = salaryFor(st, p.key);
+  const extra = incs.reduce((s, i) => s + i.amount, 0);
+  const fixed = st.fixed.reduce((s, f) => s + f.amount, 0);
+  const spent = exps.reduce((s, e) => s + e.amount, 0);
+  return { exps, incs, salary, extra, fixed, spent, income: salary + extra, out: fixed + spent, left: salary + extra - fixed - spent };
+}
+
+export function openSummarySheet(ctx) {
+  const body = h(`<div class="summary-sheet"></div>`);
+
+  const draw = () => {
+    const p = ctx.period();
+    const now = periodStats(ctx, p);
+    const prev = periodStats(ctx, shiftPeriod(p, -1, ctx.state.settings.payday));
+    const current = isCurrent(p);
+    const days = current ? Math.max(1, daysElapsed(p) + 1) : totalDays(p);
+    const cats = ctx
+      .categories()
+      .map((c) => ({ c, total: now.exps.filter((e) => e.categoryId === c.id).reduce((s, e) => s + e.amount, 0), n: now.exps.filter((e) => e.categoryId === c.id).length }))
+      .filter((x) => x.total > 0)
+      .sort((a, b) => b.total - a.total);
+    const top = [...now.exps].sort((a, b) => b.amount - a.amount).slice(0, 5);
+    const diff = now.spent - prev.spent;
+
+    const line = (label, value, cls = '') => `<div class="sum-line ${cls}"><span>${label}</span><b>${value}</b></div>`;
+    const compare = prev.spent > 0
+      ? diff === 0
+        ? 'Geçen dönemle aynı harcadın.'
+        : `Geçen döneme göre <b>${esc(money(Math.abs(diff)))} ${diff < 0 ? 'daha az' : 'daha fazla'}</b> harcadın${current ? ' (şu ana kadar)' : ''}.`
+      : '';
+
+    body.innerHTML = `
+      <p class="sum-period">${esc(periodLabel(p))} · ${current ? 'devam ediyor' : 'kapandı'}</p>
+
+      <section class="sum-card">
+        ${line('Maaş', esc(money(now.salary)))}
+        ${now.extra ? line(`Ek gelir (${now.incs.length})`, `+${esc(money(now.extra))}`, 'plus') : ''}
+        ${line('Toplam gelir', esc(money(now.income)), 'total')}
+        ${line('Sabit giderler', esc(money(now.fixed)))}
+        ${line(`Harcamalar (${now.exps.length})`, esc(money(now.spent)))}
+        ${line('Toplam gider', esc(money(now.out)), 'total')}
+        ${line(current ? 'Şu an kalan' : now.left >= 0 ? 'Dönem sonunda artan' : 'Dönem sonunda açık', esc(money(Math.abs(now.left))), `result ${now.left < 0 ? 'neg' : 'pos'}`)}
+      </section>
+
+      <section class="sum-facts">
+        <p>Günde ortalama <b>${esc(money(Math.round(now.spent / days)))}</b> harcadın${current ? ` (${days} gün)` : ''}.</p>
+        ${compare ? `<p>${compare}</p>` : ''}
+        ${cats[0] ? `<p>En çok <b>${esc(cats[0].c.name)}</b> kategorisine gitti (${esc(money(cats[0].total))}).</p>` : ''}
+      </section>
+
+      ${cats.length ? `<div class="label-row"><span>Kategorilere göre</span></div>
+      <div class="list">${cats
+        .map(
+          (x) => `<button type="button" class="row" data-cat="${x.c.id}">
+            <span class="row-icon" style="--c:${x.c.color}">${catIcon(x.c.icon)}</span>
+            <span class="row-main"><b>${esc(x.c.name)}</b><small>${x.n} harcama · %${Math.round((x.total / now.spent) * 100)}</small></span>
+            <span class="row-amt">${esc(money(x.total))}</span>
+          </button>`
+        )
+        .join('')}</div>` : '<p class="empty">Bu dönemde harcama yok.</p>'}
+
+      ${top.length ? `<div class="label-row"><span>En büyük harcamalar</span></div>
+      <div class="list">${top.map((e) => expenseRow(e, byId(ctx.state.categories, e.categoryId))).join('')}</div>` : ''}`;
+  };
+
+  body.addEventListener('click', (e) => {
+    const c = e.target.closest('[data-cat]');
+    if (c) ctx.open.category(c.dataset.cat);
+    const x = e.target.closest('[data-exp]');
+    if (x) ctx.open.expense(x.dataset.exp);
+  });
+  const unsubscribe = ctx.subscribe(draw);
+  draw();
+  return openSheet({ title: 'Dönem özeti', body, onClose: unsubscribe, className: 'tall' });
 }
 
 // =====================================================================
@@ -665,8 +827,7 @@ export function openSettingsSheet(ctx) {
       <section class="group">
         <h3>Maaş</h3>
         <div class="field-row">
-          <label class="field money-field"><span class="lbl">Aylık net maaş</span><span class="prefix">₺</span>
-            <input name="salary" inputmode="decimal" value="${esc(amountInput(s0.salary))}" placeholder="0"></label>
+          <button type="button" class="field salary-btn"><span class="lbl">Aylık net maaş</span><b class="salary-val"></b></button>
           <label class="field day-field"><span class="lbl">Maaş günü</span>
             <select name="payday">${Array.from({ length: 28 }, (_, i) => `<option value="${i + 1}" ${i + 1 === s0.payday ? 'selected' : ''}>${i + 1}</option>`).join('')}</select></label>
         </div>
@@ -679,7 +840,7 @@ export function openSettingsSheet(ctx) {
       </section>
 
       <section class="group">
-        <h3>Kategoriler ve aylık limitler <span class="hint">her maaş gününde sıfırlanır</span></h3>
+        <h3>Kategoriler <span class="hint">bu dönemki harcama</span></h3>
         <div class="list cats-list"></div>
         <form class="inline-add new-cat">
           <input name="name" placeholder="Yeni kategori (örn. Evcil hayvan)">
@@ -714,41 +875,33 @@ export function openSettingsSheet(ctx) {
   const drawFree = () => {
     const st = ctx.state;
     const fixed = st.fixed.reduce((s, f) => s + f.amount, 0);
-    const salary = st.settings.salary || 0;
     const p = ctx.period();
+    const salary = salaryFor(st, p.key);
+    $('.salary-val').textContent = salary ? money(salary) : 'Gir ›';
     const extra = (st.incomes || []).filter((i) => inPeriod(i.date, p)).reduce((s, i) => s + i.amount, 0);
     $('.free-box').innerHTML = salary
       ? `<span>Maaş ${esc(money(salary))}</span>${extra ? `<span>+ Ek gelir ${esc(money(extra))}</span>` : ''}<span>− Sabit ${esc(money(fixed))}</span><b>= Serbest ${esc(money(salary + extra - fixed))}</b>`
       : '<span class="hint">Maaşını girince “kalan para” ve “günlük harcayabileceğin” hesaplanır.</span>';
   };
 
+  const spentIn = (catId) => {
+    const p = ctx.period();
+    return ctx.state.expenses.filter((e) => e.categoryId === catId && inPeriod(e.date, p)).reduce((s, e) => s + e.amount, 0);
+  };
   const drawCats = () => {
     const cats = ctx.categories();
     $('.cats-list').innerHTML = cats
       .map(
-        (c) => `<div class="row cat-row">
-          <button type="button" class="cat-open" data-cat="${c.id}">
-            <span class="row-icon" style="--c:${c.color}">${catIcon(c.icon)}</span>
-            <span class="row-main"><b>${esc(c.name)}</b><small>düzenle ›</small></span>
-          </button>
-          <label class="limit-input"><input data-limit="${c.id}" inputmode="decimal" value="${esc(amountInput(c.limit))}" placeholder="limitsiz" aria-label="${esc(c.name)} aylık limiti" enterkeyhint="done"><span>₺</span></label>
-        </div>`
+        (c) => `<button type="button" class="row" data-cat="${c.id}">
+          <span class="row-icon" style="--c:${c.color}">${catIcon(c.icon)}</span>
+          <span class="row-main"><b>${esc(c.name)}</b><small>${c.keywords.length} anahtar kelime</small></span>
+          <span class="row-amt">${esc(money(spentIn(c.id)))}</span>${ICON.chevron}
+        </button>`
       )
       .join('');
-    const total = cats.reduce((s, c) => s + (c.limit || 0), 0);
-    const st = ctx.state;
-    const free = (st.settings.salary || 0) - st.fixed.reduce((s, f) => s + f.amount, 0);
-    let note = $('.cats-note');
-    if (!note) {
-      note = document.createElement('p');
-      note.className = 'hint cats-note';
-      $('.cats-list').after(note);
-    }
-    note.innerHTML = `Limitler toplamı <b>${esc(money(total))}</b>${st.settings.salary ? (total > free ? ` — serbest paranın ${esc(money(total - free))} üstünde` : ` — serbest paranın içinde`) : ''}`;
-    note.classList.toggle('bad', !!st.settings.salary && total > free);
   };
 
-  $('[name=salary]').addEventListener('change', (e) => ctx.commit((s) => (s.settings.salary = parseAmount(e.target.value) || 0)));
+  $('.salary-btn').addEventListener('click', () => ctx.open.budget());
   $('[name=payday]').addEventListener('change', (e) =>
     ctx.commit((s) => {
       s.settings.payday = Number(e.target.value) || 15;
@@ -760,21 +913,6 @@ export function openSettingsSheet(ctx) {
   $('.cats-list').addEventListener('click', (e) => {
     const row = e.target.closest('[data-cat]');
     if (row) ctx.open.category(row.dataset.cat);
-  });
-  $('.cats-list').addEventListener('change', (e) => {
-    const id = e.target.dataset.limit;
-    if (!id) return;
-    const v = e.target.value.trim();
-    const limit = v ? parseAmount(v) : 0;
-    if (v && limit == null) {
-      toast('Tutar anlaşılmadı', 'bad');
-      return;
-    }
-    ctx.commit((s) => (byId(s.categories, id).limit = limit || 0));
-    toast('Limit kaydedildi');
-  });
-  $('.cats-list').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && e.target.dataset.limit) e.target.blur();
   });
   $('.new-cat').addEventListener('submit', (e) => {
     e.preventDefault();
@@ -993,7 +1131,8 @@ export function openOnboarding(ctx) {
   const finish = (withValues) => {
     ctx.commit((s) => {
       if (withValues) {
-        s.settings.salary = parseAmount($('[name=salary]').value) || s.settings.salary || 0;
+        const v = parseAmount($('[name=salary]').value);
+        if (v) setSalary(s, ctx.period().key, v);
         s.settings.payday = Number($('[name=payday]').value) || 15;
       }
       s.settings.onboarded = true;

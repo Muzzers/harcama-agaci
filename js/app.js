@@ -1,11 +1,11 @@
-import { load, save, requestPersistence, useAccount, loadGuest, clearGuest, hasLocal, rememberUser, lastUser, normalizeState, freshState } from './store.js';
+import { salaryFor, load, save, requestPersistence, useAccount, loadGuest, clearGuest, hasLocal, rememberUser, lastUser, normalizeState, freshState } from './store.js';
 import * as cloud from './cloud.js';
 import { showLogin, showLoading, hideAuth } from './auth.js';
 import { periodFor, shiftPeriod, inPeriod, isCurrent, daysLeft, daysElapsed, totalDays, periodLabel, periodName } from './period.js';
 import { money, moneyShort, moneyInt } from './format.js';
 import { Universe } from './universe.js';
 import { toast, trackKeyboard } from './ui.js';
-import { openAddSheet, openExpenseSheet, openIncomeSheet, openCategorySheet, openSettingsSheet, openListSheet, openOnboarding, openBudgetSheet } from './sheets.js';
+import { openAddSheet, openExpenseSheet, openIncomeSheet, openCategorySheet, openSettingsSheet, openListSheet, openOnboarding, openBudgetSheet, openSummarySheet } from './sheets.js';
 
 let state = load();
 let viewPeriod = periodFor(new Date(), state.settings.payday);
@@ -23,7 +23,7 @@ export function sortedCategories(s = state) {
 
 function buildModel(s, period) {
   const expenses = s.expenses.filter((e) => inPeriod(e.date, period));
-  const salary = Number(s.settings.salary) || 0;
+  const salary = salaryFor(s, period.key);
   const fixedTotal = s.fixed.reduce((sum, f) => sum + (Number(f.amount) || 0), 0);
   const incomeTotal = (s.incomes || []).filter((i) => inPeriod(i.date, period)).reduce((sum, i) => sum + i.amount, 0);
   const free = salary + incomeTotal - fixedTotal;
@@ -93,6 +93,7 @@ const ctx = {
     settings: () => openSettingsSheet(ctx),
     list: () => openListSheet(ctx),
     budget: () => openBudgetSheet(ctx),
+    summary: () => openSummarySheet(ctx),
   },
 };
 
@@ -216,7 +217,7 @@ function render() {
 
   const current = isCurrent(viewPeriod);
   $('period-title').textContent = periodLabel(viewPeriod);
-  $('period-sub').textContent = current ? periodName(viewPeriod) : `${periodName(viewPeriod)} · geçmiş`;
+  $('period-sub').textContent = `${current ? periodName(viewPeriod) : `${periodName(viewPeriod)} · geçmiş`} · özet ›`;
   $('next-period').disabled = current || viewPeriod.start > new Date();
 
   const hint = $('stage-hint');
@@ -234,7 +235,7 @@ function renderDaily(model, current) {
 
   if (!core.hasSalary) {
     el.innerHTML = `<span class="daily-main"><b>Maaşını gir</b></span>
-      <span class="daily-sub">Günlük harcama limitini hesaplayayım</span>`;
+      <span class="daily-sub">Günde ne kadar harcayabileceğini hesaplayayım</span>`;
     el.onclick = () => ctx.open.budget();
     return;
   }
@@ -244,7 +245,7 @@ function renderDaily(model, current) {
     const left = core.remaining;
     el.classList.add(left >= 0 ? 'good' : 'bad');
     el.innerHTML = `<span class="daily-main"><b>${left >= 0 ? `${money(left)} arttı` : `${money(-left)} aşıldı`}</b></span>
-      <span class="daily-sub">Dönem kapandı · ${moneyShort(core.spent)} harcandı</span>`;
+      <span class="daily-sub">Dönem kapandı · ${moneyInt(core.spent)} harcandı</span>`;
     return;
   }
 
@@ -279,6 +280,7 @@ function renderDaily(model, current) {
 $('btn-add').addEventListener('click', () => ctx.open.add());
 $('btn-settings').addEventListener('click', () => ctx.open.settings());
 $('btn-list').addEventListener('click', () => ctx.open.list());
+$('period-label').addEventListener('click', () => ctx.open.summary());
 $('prev-period').addEventListener('click', () => {
   viewPeriod = shiftPeriod(viewPeriod, -1, state.settings.payday);
   universe.resetView(true);

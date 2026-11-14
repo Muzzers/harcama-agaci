@@ -4,6 +4,39 @@
 import { iconKey } from './icons.js';
 
 const BASE_KEY = 'harcama-agaci:v1';
+const BASE_FROM = '0000-00';
+
+// ---------- Maaş geçmişi ----------
+// settings.salaryHistory: [{ from: 'YYYY-MM' (dönem anahtarı), amount }]
+// Bir dönemin maaşı, o döneme kadar yapılan son değişikliktir.
+
+export function salaryFor(s, periodKey) {
+  let amount = 0;
+  for (const h of s.settings.salaryHistory || []) if (h.from <= periodKey) amount = h.amount;
+  return amount;
+}
+
+/** Maaşı bu dönemden itibaren değiştirir. Hiç maaş girilmemişse tüm dönemlere uygular. */
+export function setSalary(s, periodKey, amount) {
+  const hist = s.settings.salaryHistory || [];
+  if (!hist.some((h) => h.amount > 0)) {
+    s.settings.salaryHistory = [{ from: BASE_FROM, amount }];
+  } else {
+    const at = hist.find((h) => h.from === periodKey);
+    if (at) at.amount = amount;
+    else hist.push({ from: periodKey, amount });
+    hist.sort((a, b) => a.from.localeCompare(b.from));
+    // Aynı tutarı tekrar eden ardışık kayıtları sadeleştir
+    s.settings.salaryHistory = hist.filter((h, i) => i === 0 || h.amount !== hist[i - 1].amount);
+  }
+  s.settings.salary = salaryFor(s, '9999-99');
+}
+
+export function removeSalaryChange(s, from) {
+  if (from === BASE_FROM) return;
+  s.settings.salaryHistory = (s.settings.salaryHistory || []).filter((h) => h.from !== from);
+  s.settings.salary = salaryFor(s, '9999-99');
+}
 let KEY = BASE_KEY;
 
 /** Hesaba geçince telefondaki kopya o hesaba özel anahtarda tutulur. */
@@ -95,7 +128,7 @@ export function uid() {
 export function freshState() {
   return {
     version: 1,
-    settings: { salary: 0, payday: 15, onboarded: false, removedHealth: true },
+    settings: { salary: 0, salaryHistory: [{ from: BASE_FROM, amount: 0 }], payday: 15, onboarded: false, removedHealth: true },
     categories: DEFAULT_CATEGORIES.map((c, i) => ({ id: uid(), order: i, fallback: false, ...c, keywords: [...c.keywords] })),
     fixed: [],
     expenses: [],
@@ -123,7 +156,7 @@ function migrate(s) {
     expenses: Array.isArray(s.expenses)
       ? s.expenses
           .filter((e) => e && Number(e.amount) > 0 && !isNaN(new Date(e.date)))
-          .map((e) => ({ id: e.id || uid(), title: String(e.title || 'Harcama'), amount: Number(e.amount), date: new Date(e.date).toISOString(), categoryId: e.categoryId || null }))
+          .map((e) => ({ id: e.id || uid(), title: String(e.title || 'Harcama'), amount: Number(e.amount), date: new Date(e.date).toISOString(), categoryId: e.categoryId || null, ...(e.receipt ? { receipt: true } : {}) }))
       : [],
   };
   out.incomes = Array.isArray(s.incomes)
@@ -143,6 +176,11 @@ function migrate(s) {
     out.settings.removedHealth = true;
   }
   out.updatedAt = Number(s.updatedAt) || 0;
+  const hist = Array.isArray(out.settings.salaryHistory) ? out.settings.salaryHistory : [];
+  out.settings.salaryHistory = hist.length
+    ? hist.filter((x) => x && typeof x.from === 'string').map((x) => ({ from: x.from, amount: Number(x.amount) || 0 })).sort((a, b) => a.from.localeCompare(b.from))
+    : [{ from: BASE_FROM, amount: Number(out.settings.salary) || 0 }];
+  if (!out.settings.salaryHistory.length) out.settings.salaryHistory = [{ from: BASE_FROM, amount: 0 }];
   const ids = new Set(out.categories.map((c) => c.id));
   const fb = out.categories.find((c) => c.fallback).id;
   for (const e of out.expenses) if (!ids.has(e.categoryId)) e.categoryId = fb;

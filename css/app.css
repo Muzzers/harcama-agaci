@@ -495,7 +495,7 @@ svg {
 }
 
 .cat-name {
-  font-size: max(9px, calc(var(--d) * 0.135));
+  font-size: max(calc(9px * var(--inv, 1)), calc(var(--d) * 0.135));
   font-weight: 700;
   line-height: 1.15;
   margin-top: 2px;
@@ -554,7 +554,7 @@ svg {
 }
 
 .exp-amt {
-  font-size: max(8px, calc(var(--d) * 0.25));
+  font-size: max(calc(8.5px * var(--inv, 1)), calc(var(--d) * 0.25));
   font-weight: 800;
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
@@ -562,19 +562,29 @@ svg {
   line-height: 1.05;
 }
 
-.exp-title {
-  display: none;
-  font-size: max(8px, calc(var(--d) * 0.15));
+.labels {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+
+.bubble-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  will-change: transform;
+  transition: opacity 0.25s;
+  max-width: calc(84px * var(--inv, 1));
+  font-size: calc(10.5px * var(--inv, 1));
   font-weight: 600;
-  opacity: 0.88;
-  max-width: 80%;
+  line-height: 1.2;
+  color: var(--text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.bubble.exp.big .exp-title {
-  display: block;
+  pointer-events: none;
+  text-shadow: 0 0 3px var(--bg), 0 0 6px var(--bg), 0 1px 1px var(--bg);
 }
 
 .bubble.more .bubble-body {
@@ -2048,4 +2058,214 @@ details.edit[open] summary::after {
   margin: 0;
   font-size: 13px;
   color: var(--muted);
+}
+
+/* ---------- Dönem özeti ---------- */
+
+button.period-label {
+  border-radius: 12px;
+  padding: 2px 8px;
+  transition: background 0.2s;
+}
+
+button.period-label:active {
+  background: var(--field);
+}
+
+.sum-period {
+  margin: 0 2px 12px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.sum-card {
+  padding: 6px 16px;
+  border-radius: 18px;
+  background: var(--field);
+}
+
+.sum-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  font-size: 15px;
+}
+
+.sum-line span {
+  color: var(--muted);
+}
+
+.sum-line b {
+  font-variant-numeric: tabular-nums;
+}
+
+.sum-line.total {
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 12px;
+  margin-bottom: 4px;
+}
+
+.sum-line.total span {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.sum-line.result {
+  padding: 12px 0 10px;
+  font-size: 17px;
+}
+
+.sum-line.result span {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.sum-line.result b {
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.sum-line.result.pos b,
+.sum-line.plus b {
+  color: var(--good);
+}
+
+.sum-line.result.neg b {
+  color: var(--bad);
+}
+
+.sum-facts {
+  margin: 14px 2px 6px;
+  font-size: 15px;
+  color: var(--muted);
+}
+
+.sum-facts p {
+  margin: 0 0 6px;
+}
+
+.sum-facts b {
+  color: var(--text);
+}
+
+/* ---------- Maaş geçmişi ---------- */
+
+.salary-btn {
+  text-align: left;
+  align-items: flex-start;
+  cursor: pointer;
+}
+
+.salary-val {
+  font-size: 17px;
+  font-variant-numeric: tabular-nums;
+}
+
+.hist {
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  background: var(--field);
+  padding: 4px 6px 4px 14px;
+}
+
+.hist-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.hist-row span {
+  flex: 1;
+}
+
+.hist-row b {
+  font-variant-numeric: tabular-nums;
+}
+
+.hist-row.on {
+  color: var(--text);
+}
+
+.hist-row.on b::after {
+  content: ' · bu dönem';
+  font-weight: 500;
+  color: var(--accent-2);
+  font-size: 12px;
+}
+
+.hist-row:not(:has(button)) {
+  padding-right: 42px;
+}
+
+/* ---------- Fiş ---------- */
+
+.receipt-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.receipt-pick {
+  cursor: pointer;
+  flex: 1;
+  min-width: 180px;
+}
+
+.receipt-thumb {
+  width: 64px;
+  height: 64px;
+  border-radius: 12px;
+  overflow: hidden;
+  flex: none;
+  background: var(--field);
+  box-shadow: 0 0 0 1px var(--line);
+}
+
+.receipt-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.receipt-remove {
+  min-height: 40px;
+  color: var(--bad);
+}
+
+.receipt-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 400;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: calc(var(--safe-t) + 16px) 16px calc(var(--safe-b) + 16px);
+  background: rgba(0, 0, 0, 0.92);
+  opacity: 0;
+  transition: opacity 0.25s;
+}
+
+.receipt-viewer.open {
+  opacity: 1;
+}
+
+.receipt-viewer img {
+  max-width: 100%;
+  max-height: calc(100% - 40px);
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+.receipt-viewer span {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 14px;
 }

@@ -10,7 +10,9 @@ const USER_DOMAIN = 'kullanici.harcama-agaci.app';
 let fb = null;
 let loading = null;
 
-export const cloudEnabled = () => !!(FIREBASE_CONFIG && FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.projectId);
+// ?yerel ile açılırsa hesapsız yerel modda çalışır (geliştirme/deneme için; buluta dokunmaz).
+const LOCAL_ONLY = typeof location !== 'undefined' && new URLSearchParams(location.search).has('yerel');
+export const cloudEnabled = () => !LOCAL_ONLY && !!(FIREBASE_CONFIG && FIREBASE_CONFIG.apiKey && FIREBASE_CONFIG.projectId);
 
 async function sdk() {
   if (fb) return fb;
@@ -142,6 +144,24 @@ export async function flush(onResult) {
 }
 
 export const hasPending = () => !!pending;
+
+// ---------- Fişler ----------
+
+export async function saveReceipt(uid, id, dataUrl) {
+  const { db, f } = await sdk();
+  await f.setDoc(f.doc(db, 'users', uid, 'receipts', id), { data: dataUrl, savedAt: f.serverTimestamp() });
+}
+
+export async function loadReceipt(uid, id) {
+  const { db, f } = await sdk();
+  const snap = await f.getDoc(f.doc(db, 'users', uid, 'receipts', id));
+  return snap.exists() ? snap.data().data : null;
+}
+
+export async function deleteReceipt(uid, id) {
+  const { db, f } = await sdk();
+  await f.deleteDoc(f.doc(db, 'users', uid, 'receipts', id));
+}
 
 /** Başka cihazdan gelen değişiklikleri dinler. */
 export async function watchRemote(uid, cb) {
