@@ -1,13 +1,19 @@
-import { load, save, requestPersistence } from './store.js';
+import { load, save, requestPersistence, useAccount, loadGuest, clearGuest, hasLocal, rememberUser, lastUser, normalizeState, freshState } from './store.js';
+import * as cloud from './cloud.js';
+import { showLogin, showLoading, hideAuth } from './auth.js';
 import { periodFor, shiftPeriod, inPeriod, isCurrent, daysLeft, daysElapsed, totalDays, periodLabel, periodName } from './period.js';
 import { money, moneyShort, moneyInt } from './format.js';
 import { Universe } from './universe.js';
 import { toast, trackKeyboard } from './ui.js';
-import { openAddSheet, openExpenseSheet, openIncomeSheet, openCategorySheet, openSettingsSheet, openListSheet, openOnboarding } from './sheets.js';
+import { openAddSheet, openExpenseSheet, openIncomeSheet, openCategorySheet, openSettingsSheet, openListSheet, openOnboarding, openBudgetSheet } from './sheets.js';
 
 let state = load();
 let viewPeriod = periodFor(new Date(), state.settings.payday);
 const listeners = new Set();
+let account = null; // { uid, name }
+let stopRemote = null;
+let syncState = 'idle'; // idle | saving | saved | error | offline
+let started = false;
 
 // ---------- Hesaplar ----------
 
@@ -47,7 +53,7 @@ const ctx = {
   /** Durumu değiştir, kaydet, yeniden çiz. */
   commit(mutate, { highlight, focusDate } = {}) {
     mutate(state);
-    if (!save(state)) toast('Kaydedilemedi — depolama dolu olabilir.', 'bad');
+    persist();
     if (focusDate && !inPeriod(focusDate, viewPeriod)) viewPeriod = periodFor(focusDate, state.settings.payday);
     render();
     if (highlight) {
@@ -58,12 +64,22 @@ const ctx = {
   /** Tüm durumu değiştir (yedekten yükleme / sıfırlama). */
   replace(next) {
     state = next;
-    save(state);
+    persist();
     viewPeriod = periodFor(new Date(), state.settings.payday);
     render();
   },
   refreshPeriod() {
     viewPeriod = periodFor(isCurrent(viewPeriod) ? new Date() : viewPeriod.start, state.settings.payday);
+  },
+  get account() {
+    return account;
+  },
+  get syncState() {
+    return syncState;
+  },
+  async signOut() {
+    await cloud.flush(onSynced);
+    await cloud.signOut();
   },
   subscribe(fn) {
     listeners.add(fn);
@@ -76,14 +92,118 @@ const ctx = {
     category: (id) => openCategorySheet(ctx, id),
     settings: () => openSettingsSheet(ctx),
     list: () => openListSheet(ctx),
+    budget: () => openBudgetSheet(ctx),
   },
 };
+
+// ---------- Kaydetme ve bulut eşitleme ----------
+
+function persist() {
+  state.updatedAt = Date.now();
+  if (!save(state)) toast('Kaydedilemedi — depolama dolu olabilir.', 'bad');
+  if (account) {
+    syncState = 'saving';
+    cloud.saveRemote(account.uid, state, onSynced);
+  }
+}
+
+let lastSyncError = 0;
+function onSynced(err) {
+  if (!err) {
+    syncState = 'saved';
+  } else {
+    syncState = navigator.onLine === false || err.code === 'unavailable' ? 'offline' : 'error';
+    if (syncState === 'error' && Date.now() - lastSyncError > 60000) {
+      lastSyncError = Date.now();
+      toast(`Buluta kaydedilemedi: ${cloud.errorText(err)}`, 'bad');
+    }
+  }
+  for (const fn of listeners) fn();
+}
+
+async function onAuth(user) {
+  if (!user) {
+    account = null;
+    stopRemote?.();
+    stopRemote = null;
+    rememberUser(null);
+    useAccount(null);
+    for (const w of document.querySelectorAll('.sheet-wrap')) w.remove();
+    showLogin();
+    return;
+  }
+  if (account?.uid === user.uid && started) {
+    hideAuth();
+    return;
+  }
+
+  account = { uid: user.uid, name: cloud.displayName(user) };
+  rememberUser(account);
+  useAccount(user.uid);
+
+  const local = hasLocal() ? load() : null;
+  let remote = null;
+  let reachable = true;
+  try {
+    remote = await cloud.loadRemote(user.uid);
+  } catch (err) {
+    reachable = false;
+    syncState = 'offline';
+    if (err?.code === 'permission-denied') toast(cloud.errorText(err), 'bad');
+  }
+
+  let next;
+  let upload = false;
+  if (remote && (!local || remote.updatedAt >= (local.updatedAt || 0))) {
+    next = normalizeState({ ...remote.state, updatedAt: remote.updatedAt }) || freshState();
+  } else if (local) {
+    next = local;
+    upload = reachable;
+  } else {
+    const guest = reachable && !remote ? loadGuest() : null;
+    next = guest || freshState();
+    upload = reachable;
+    if (guest) {
+      clearGuest();
+      setTimeout(() => toast('Telefondaki verilerin hesabına taşındı'), 600);
+    }
+  }
+  state = next;
+  save(state);
+  if (upload) {
+    syncState = 'saving';
+    cloud.saveRemote(account.uid, state, onSynced);
+  } else if (reachable) {
+    syncState = 'saved';
+  }
+
+  viewPeriod = periodFor(new Date(), state.settings.payday);
+  hideAuth();
+  start();
+  render();
+
+  stopRemote?.();
+  try {
+    stopRemote = await cloud.watchRemote(user.uid, (r) => {
+      if (r.updatedAt <= (state.updatedAt || 0)) return;
+      const incoming = normalizeState({ ...r.state, updatedAt: r.updatedAt });
+      if (!incoming) return;
+      state = incoming;
+      save(state);
+      syncState = 'saved';
+      render();
+    });
+  } catch {
+    /* çevrimdışı; bağlanınca sayfa yenilendiğinde tekrar denenir */
+  }
+}
 
 // ---------- Ekran ----------
 
 const stage = document.getElementById('stage');
 const universe = new Universe(stage, {
-  onTapCore: () => universe.setExpanded(!universe.expanded),
+  onTapCore: () => ctx.open.budget(),
+  onLongPressCore: () => universe.setExpanded(!universe.expanded),
   onTapCategory: (id) => ctx.open.category(id),
   onTapExpense: (id) => ctx.open.expense(id),
 });
@@ -115,7 +235,7 @@ function renderDaily(model, current) {
   if (!core.hasSalary) {
     el.innerHTML = `<span class="daily-main"><b>Maaşını gir</b></span>
       <span class="daily-sub">Günlük harcama limitini hesaplayayım</span>`;
-    el.onclick = () => ctx.open.settings();
+    el.onclick = () => ctx.open.budget();
     return;
   }
   el.onclick = () => ctx.open.list();
@@ -189,11 +309,42 @@ window.addEventListener('storage', (e) => {
   }
 });
 
+function start() {
+  if (started) {
+    if (!state.settings.onboarded) setTimeout(() => openOnboarding(ctx), 350);
+    return;
+  }
+  started = true;
+  render();
+  if (!state.settings.onboarded) setTimeout(() => openOnboarding(ctx), 350);
+}
+
 trackKeyboard();
 requestPersistence();
-render();
 
-if (!state.settings.onboarded) setTimeout(() => openOnboarding(ctx), 350);
+if (!cloud.cloudEnabled()) {
+  start();
+} else {
+  // Daha önce giriş yapıldıysa telefondaki kopyayla hemen aç, bulut arkadan gelsin.
+  const last = lastUser();
+  if (last?.uid) {
+    account = last;
+    useAccount(last.uid);
+    state = load();
+    viewPeriod = periodFor(new Date(), state.settings.payday);
+    start();
+  } else {
+    showLoading();
+  }
+  cloud.watchAuth(onAuth, () => {
+    syncState = 'offline';
+    if (!last?.uid) showLogin({ notice: 'İnternet bağlantısı yok. Giriş yapmak için bağlan.' });
+  });
+  window.addEventListener('online', () => cloud.flush(onSynced));
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') cloud.flush(onSynced);
+  });
+}
 
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   navigator.serviceWorker.register('sw.js').catch(() => {});

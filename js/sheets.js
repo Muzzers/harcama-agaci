@@ -551,6 +551,69 @@ export function openListSheet(ctx) {
 }
 
 // =====================================================================
+// Bütçe (merkez daire): gelir, sabit gider, kalan
+// =====================================================================
+
+export function openBudgetSheet(ctx) {
+  const body = h(`
+    <div class="budget">
+      <div class="budget-hero"></div>
+      <section class="group">
+        <h3>Gelir</h3>
+        <label class="field money-field"><span class="lbl">Aylık net maaş</span><span class="prefix">₺</span>
+          <input name="salary" inputmode="decimal" placeholder="0" enterkeyhint="done"></label>
+        <div class="list incomes"></div>
+        <button class="secondary wide add-inc" type="button">${ICON.plus}<span>Ek gelir ekle</span></button>
+      </section>
+      <section class="group">
+        <h3>Sabit giderler <span class="hint">her dönem düşülür</span></h3>
+        <div class="fixed"></div>
+      </section>
+      <p class="hint center">İpucu: ortadaki daireye basılı tutarak baloncukları gizleyip gösterebilirsin.</p>
+    </div>`);
+  const $ = (s) => body.querySelector(s);
+  const salaryIn = $('[name=salary]');
+
+  const draw = () => {
+    const m = ctx.model();
+    const c = m.core;
+    const p = ctx.period();
+    const incs = (ctx.state.incomes || []).filter((i) => inPeriod(i.date, p)).sort((a, b) => new Date(b.date) - new Date(a.date));
+    $('.budget-hero').innerHTML = `
+      <div class="bh-label">${c.remaining < 0 ? 'Bütçe aşıldı' : 'Kalan'} · ${esc(periodLabel(p))}</div>
+      <div class="bh-amount ${c.remaining < 0 ? 'neg' : ''}">${esc(money(Math.abs(c.remaining)))}</div>
+      <div class="bh-lines">
+        <span>Maaş</span><b>${esc(money(c.salary))}</b>
+        ${c.incomeTotal ? `<span>Ek gelir</span><b class="plus">+${esc(money(c.incomeTotal))}</b>` : ''}
+        <span>Sabit giderler</span><b>${c.fixedTotal ? '−' : ''}${esc(money(c.fixedTotal))}</b>
+        <span>Harcamalar</span><b>${c.spent ? '−' : ''}${esc(money(c.spent))}</b>
+      </div>`;
+    if (document.activeElement !== salaryIn) salaryIn.value = amountInput(ctx.state.settings.salary);
+    $('.incomes').innerHTML = incs.length ? incs.map(incomeRow).join('') : '<p class="empty small">Bu dönemde ek gelir yok (ikramiye, ek ders, iade…).</p>';
+  };
+
+  salaryIn.addEventListener('change', () => {
+    const v = parseAmount(salaryIn.value);
+    ctx.commit((s) => (s.settings.salary = v || 0));
+    toast('Maaş kaydedildi');
+  });
+  salaryIn.addEventListener('keydown', (e) => e.key === 'Enter' && salaryIn.blur());
+  $('.incomes').addEventListener('click', (e) => {
+    const r = e.target.closest('[data-inc]');
+    if (r) ctx.open.income(r.dataset.inc);
+  });
+  $('.add-inc').addEventListener('click', () => ctx.open.add({ mode: 'income' }));
+  const drawFixed = fixedEditor(ctx, $('.fixed'));
+
+  const unsubscribe = ctx.subscribe(() => {
+    draw();
+    drawFixed();
+  });
+  draw();
+  return openSheet({ title: 'Bütçe', body, onClose: unsubscribe, className: 'tall' });
+}
+
+// =====================================================================
 // Ayarlar
 // =====================================================================
 
@@ -591,6 +654,14 @@ export function openSettingsSheet(ctx) {
   const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
   const body = h(`
     <div class="settings">
+      ${ctx.account ? `<section class="group account">
+        <h3>Hesap</h3>
+        <div class="acct">
+          <span class="acct-avatar">${esc(ctx.account.name.charAt(0).toLocaleUpperCase('tr-TR'))}</span>
+          <span class="row-main"><b>${esc(ctx.account.name)}</b><small class="sync"></small></span>
+        </div>
+        <button class="secondary wide signout" type="button">Çıkış yap</button>
+      </section>` : ''}
       <section class="group">
         <h3>Maaş</h3>
         <div class="field-row">
@@ -628,8 +699,8 @@ export function openSettingsSheet(ctx) {
           <button class="secondary export" type="button">Yedeği kaydet</button>
           <label class="secondary file-btn">Yedekten yükle<input type="file" accept="application/json,.json" hidden></label>
         </div>
-        <p class="hint">Veriler sadece bu telefonda saklanır. Ayda bir yedek almanı öneririm.</p>
-        <button class="danger-btn reset" type="button">${ICON.trash}<span>Tüm verileri sil</span></button>
+        <p class="hint">${ctx.account ? 'Veriler hesabında saklanıyor; yedek yine de iyi bir güvencedir.' : 'Veriler sadece bu telefonda saklanır. Ayda bir yedek almanı öneririm.'}</p>
+        <button class="danger-btn reset" type="button">${ICON.trash}<span>${ctx.account ? 'Tüm verileri sil (buluttakiler dahil)' : 'Tüm verileri sil'}</span></button>
       </section>
 
       ${standalone ? '' : `<section class="group tip">
@@ -771,13 +842,33 @@ export function openSettingsSheet(ctx) {
     setTimeout(() => openOnboarding(ctx), 400);
   });
 
+  const SYNC = { saved: 'Bulutta kayıtlı', saving: 'Kaydediliyor…', offline: 'Çevrimdışı · bağlanınca eşitlenecek', error: 'Eşitleme hatası — tekrar denenecek', idle: 'Bulut hesabı' };
+  const drawSync = () => {
+    const el = $('.sync');
+    if (!el) return;
+    el.textContent = SYNC[ctx.syncState] || SYNC.idle;
+    el.dataset.state = ctx.syncState;
+  };
+  $('.signout')?.addEventListener('click', async (e) => {
+    e.currentTarget.disabled = true;
+    e.currentTarget.textContent = 'Çıkış yapılıyor…';
+    sheet.close();
+    try {
+      await ctx.signOut();
+    } catch (err) {
+      toast('Çıkış yapılamadı', 'bad');
+    }
+  });
+
   const unsubscribe = ctx.subscribe(() => {
     drawFree();
     drawFixed();
     drawCats();
+    drawSync();
   });
   drawFree();
   drawCats();
+  drawSync();
   const sheet = openSheet({ title: 'Ayarlar', body, onClose: unsubscribe, className: 'tall' });
   return sheet;
 }

@@ -3,7 +3,57 @@
 
 import { iconKey } from './icons.js';
 
-const KEY = 'harcama-agaci:v1';
+const BASE_KEY = 'harcama-agaci:v1';
+let KEY = BASE_KEY;
+
+/** Hesaba geçince telefondaki kopya o hesaba özel anahtarda tutulur. */
+export function useAccount(uid) {
+  KEY = uid ? `${BASE_KEY}:${uid}` : BASE_KEY;
+}
+
+/** Hesapsız dönemden kalan veri (ilk girişte hesaba taşınır). */
+export function loadGuest() {
+  try {
+    const raw = localStorage.getItem(BASE_KEY);
+    return raw ? migrate(JSON.parse(raw)) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function clearGuest() {
+  try {
+    localStorage.removeItem(BASE_KEY);
+  } catch {
+    /* yok say */
+  }
+}
+
+/** Bu hesabın telefonda kayıtlı kopyası var mı? */
+export function hasLocal() {
+  try {
+    return localStorage.getItem(KEY) != null;
+  } catch {
+    return false;
+  }
+}
+
+const LAST_USER = 'harcama-agaci:last-user';
+export function rememberUser(u) {
+  try {
+    if (u) localStorage.setItem(LAST_USER, JSON.stringify(u));
+    else localStorage.removeItem(LAST_USER);
+  } catch {
+    /* yok say */
+  }
+}
+export function lastUser() {
+  try {
+    return JSON.parse(localStorage.getItem(LAST_USER) || 'null');
+  } catch {
+    return null;
+  }
+}
 
 export const PALETTE = ['#30D158', '#FF9F0A', '#0A84FF', '#FFD60A', '#FF375F', '#BF5AF2', '#64D2FF', '#FF6B3D', '#5E5CE6', '#AC8E68', '#8E8E93'];
 
@@ -50,6 +100,7 @@ export function freshState() {
     fixed: [],
     expenses: [],
     incomes: [],
+    updatedAt: 0,
   };
 }
 
@@ -91,6 +142,7 @@ function migrate(s) {
     }
     out.settings.removedHealth = true;
   }
+  out.updatedAt = Number(s.updatedAt) || 0;
   const ids = new Set(out.categories.map((c) => c.id));
   const fb = out.categories.find((c) => c.fallback).id;
   for (const e of out.expenses) if (!ids.has(e.categoryId)) e.categoryId = fb;
@@ -121,6 +173,10 @@ export function save(state) {
 
 export function exportJSON(state) {
   return JSON.stringify({ app: 'harcama-agaci', exportedAt: new Date().toISOString(), ...state }, null, 2);
+}
+
+export function normalizeState(obj) {
+  return migrate(obj);
 }
 
 export function importJSON(text) {

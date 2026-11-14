@@ -461,6 +461,15 @@ export class Universe {
         lastT: performance.now(),
       };
       if (node) node.el.classList.add('pressed');
+      if (node?.type === 'core') {
+        const g = this.gesture;
+        g.lpTimer = setTimeout(() => {
+          if (this.gesture !== g || g.moved) return;
+          g.longPressed = true;
+          node.el.classList.remove('pressed');
+          this.handlers.onLongPressCore?.();
+        }, 480);
+      }
     });
 
     st.addEventListener('pointermove', (e) => {
@@ -486,6 +495,7 @@ export class Universe {
       const dy = e.clientY - g.y0;
       if (!g.moved && Math.hypot(dx, dy) > 7) {
         g.moved = true;
+        clearTimeout(g.lpTimer);
         if (g.node) {
           g.node.dragging = true;
           g.node.el.classList.add('dragging');
@@ -529,6 +539,8 @@ export class Universe {
       const g = this.gesture;
       if (!g || g.id !== e.pointerId) return;
       this.gesture = null;
+      clearTimeout(g.lpTimer);
+      if (g.longPressed) return;
       if (g.node) {
         g.node.el.classList.remove('pressed', 'dragging');
         if (g.node.dragging) {

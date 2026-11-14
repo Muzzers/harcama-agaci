@@ -1,6 +1,6 @@
 // Çevrimdışı çalışma için basit servis çalışanı.
 // Uygulama dosyalarında değişiklik yaptığında VERSION'ı artır.
-const VERSION = 'v4';
+const VERSION = 'v5';
 const CACHE = `harcama-agaci-${VERSION}`;
 const ASSETS = [
   './',
@@ -17,6 +17,9 @@ const ASSETS = [
   'js/universe.js',
   'js/sheets.js',
   'js/icons.js',
+  'js/cloud.js',
+  'js/auth.js',
+  'js/firebase-config.js',
   'icons/icon-192.png',
   'icons/icon-512.png',
   'icons/apple-touch-icon.png',
@@ -37,7 +40,9 @@ self.addEventListener('activate', (event) => {
 // Önce ağ, olmazsa önbellek: güncellemeler hemen gelir, internet yoksa yine açılır.
 self.addEventListener('fetch', (event) => {
   const req = event.request;
-  if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) return;
+  const url = new URL(req.url);
+  const sdk = url.hostname === 'www.gstatic.com' && url.pathname.startsWith('/firebasejs/');
+  if (req.method !== 'GET' || (url.origin !== self.location.origin && !sdk)) return;
   event.respondWith(
     fetch(req)
       .then((res) => {

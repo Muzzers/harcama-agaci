@@ -87,6 +87,10 @@ svg {
   stroke-linejoin: round;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 .sr {
   position: absolute;
   width: 1px;
@@ -1712,9 +1716,9 @@ details.edit[open] summary::after {
 }
 
 .seg button.on {
-  background: var(--surface-2);
-  color: var(--text);
-  box-shadow: 0 2px 8px -2px rgba(0, 0, 0, 0.35);
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 6px 16px -8px rgba(124, 108, 255, 0.9);
 }
 
 .is-income .seg button.on {
@@ -1823,4 +1827,225 @@ details.edit[open] summary::after {
 
 .limit-top {
   margin: -4px 0 14px;
+}
+
+/* ---------- Bütçe ekranı ---------- */
+
+.budget {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.budget .group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.budget .group h3 {
+  margin-bottom: 2px;
+}
+
+.budget-hero {
+  padding: 18px;
+  border-radius: 20px;
+  color: #fff;
+  background: radial-gradient(circle at 20% 0%, rgba(255, 255, 255, 0.22), transparent 55%), linear-gradient(140deg, #6a5cff, #3b2fc0);
+  box-shadow: 0 16px 40px -18px rgba(106, 92, 255, 0.9);
+}
+
+.bh-label {
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.8;
+}
+
+.bh-amount {
+  font-size: 34px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  margin: 2px 0 10px;
+}
+
+.bh-amount.neg {
+  color: #ffb4ae;
+}
+
+.bh-lines {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 12px;
+  font-size: 14px;
+}
+
+.bh-lines span {
+  opacity: 0.8;
+}
+
+.bh-lines b {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.bh-lines b.plus {
+  color: #9ff0b5;
+}
+
+.hint.center {
+  text-align: center;
+}
+
+/* ---------- Hesap ---------- */
+
+.acct {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.acct-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  font-size: 18px;
+  color: #fff;
+  background: linear-gradient(140deg, #8b7cff, #5a48f0);
+  flex: none;
+}
+
+.sync[data-state='saved'] {
+  color: var(--good);
+}
+
+.sync[data-state='error'] {
+  color: var(--bad);
+}
+
+.sync[data-state='offline'],
+.sync[data-state='saving'] {
+  color: var(--warn);
+}
+
+/* ---------- Giriş ekranı ---------- */
+
+.auth-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: grid;
+  place-items: center;
+  padding: calc(var(--safe-t) + 20px) 20px calc(var(--safe-b) + 20px);
+  overflow-y: auto;
+  background: radial-gradient(120% 70% at 50% 30%, var(--bg-2) 0%, transparent 70%), var(--bg);
+  transition: opacity 0.3s;
+}
+
+.auth-screen.leaving {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.auth-screen.loading {
+  align-content: center;
+  gap: 14px;
+  color: var(--muted);
+}
+
+.auth-screen.loading p {
+  margin: 0;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.auth-card h1 {
+  margin: 0;
+  text-align: center;
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+.auth-lead {
+  margin: -4px 0 8px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 15px;
+}
+
+.auth-orb {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  margin: 0 auto 6px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.4), transparent 50%), radial-gradient(circle at 50% 60%, #6a5cff, #3b2fc0 75%);
+  box-shadow: 0 0 50px -6px rgba(124, 108, 255, 0.8);
+  animation: bob 6s ease-in-out infinite;
+}
+
+.loading .auth-orb {
+  animation: pulse-orb 1.4s ease-in-out infinite;
+}
+
+@keyframes pulse-orb {
+  50% {
+    transform: scale(0.9);
+    opacity: 0.7;
+  }
+}
+
+.auth-orb span {
+  position: absolute;
+  border-radius: 50%;
+  background: radial-gradient(circle at 32% 26%, rgba(255, 255, 255, 0.45), transparent 50%), var(--c);
+}
+
+.auth-orb span:nth-child(1) {
+  --c: #30d158;
+  width: 26px;
+  height: 26px;
+  left: -34px;
+  top: 10px;
+}
+
+.auth-orb span:nth-child(2) {
+  --c: #ff9f0a;
+  width: 20px;
+  height: 20px;
+  right: -30px;
+  top: 0;
+}
+
+.auth-orb span:nth-child(3) {
+  --c: #0a84ff;
+  width: 16px;
+  height: 16px;
+  right: -22px;
+  bottom: 4px;
+}
+
+.auth-error {
+  margin: 0;
+  min-height: 20px;
+  color: var(--bad);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.auth-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
 }
