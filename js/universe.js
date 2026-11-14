@@ -2,7 +2,7 @@
 // Merkez = maaştan kalan para, Yörünge 1 = kategoriler, Yörünge 2 = tekil harcamalar.
 // Her baloncuk yaylarla yerine çekilir, birbirine çarpar; sürükleyince lastik gibi esner.
 
-import { moneyShort, moneyInt } from './format.js';
+import { moneyShort, moneyInt, shortDate } from './format.js';
 import { esc } from './ui.js';
 import { catIcon } from './icons.js';
 
@@ -34,6 +34,9 @@ export class Universe {
     this.fit = 1;
     this.panX = 0;
     this.panY = 0;
+    this.baseX = 0; // içeriği ortalamak için otomatik kaydırma
+    this.baseY = 0;
+    this.booted = false;
     this.w = stage.clientWidth || 375;
     this.h = stage.clientHeight || 600;
     this.raf = 0;
@@ -99,11 +102,13 @@ export class Universe {
     core.ax = 0;
     core.ay = 0;
     core.el.classList.toggle('neg', m.core.hasSalary && m.core.remaining < 0);
-    core.el.setAttribute('aria-label', m.core.hasSalary ? `Kalan ${moneyShort(m.core.remaining)}` : `Harcanan ${moneyShort(m.core.spent)}`);
+    core.el.setAttribute('aria-label', m.core.hasSalary ? `${m.core.current ? 'Kalan' : 'Artan'} ${moneyShort(m.core.remaining)}` : `Harcanan ${moneyShort(m.core.spent)}`);
     this.setHTML(core, this.coreHTML(m.core));
     seen.add('core');
 
-    const cats = m.categories;
+    // O dönem harcaması olmayan kategoriler gizlenir (hiç harcama yoksa hepsi soluk gösterilir)
+    const spentCats = m.categories.filter((c) => c.total > 0);
+    const cats = spentCats.length ? spentCats : m.categories;
     const n = cats.length;
     const maxT = Math.max(1, ...cats.map((c) => c.total));
     const maxA = Math.max(1, ...cats.flatMap((c) => c.expenses.slice(0, MAX_CHILDREN).map((e) => e.amount)));
@@ -170,7 +175,8 @@ export class Universe {
         if (it.type === 'exp') {
           child.el.setAttribute('aria-label', `${it.data.title}: ${moneyShort(it.data.amount)}`);
           this.setHTML(child, `<span class="exp-amt">${esc(moneyShort(it.data.amount))}</span>`);
-          this.setLabel(child, it.data.title);
+          this.setLabel(child, it.data.title, shortDate(it.data.date));
+          child.el.classList.toggle('receipt', !!it.data.receipt);
         } else {
           child.el.setAttribute('aria-label', `${it.data.count} harcama daha`);
           this.setHTML(child, `<span>+${it.data.count}</span>`);
@@ -186,8 +192,27 @@ export class Universe {
 
     for (const node of this.nodes.values()) if (!seen.has(node.key)) this.kill(node);
 
+    if (!this.booted) {
+      // İlk açılışta baloncukları merkezden fırlatmak yerine doğrudan yerine koy
+      this.booted = true;
+      for (const nd of this.nodes.values()) {
+        if (nd.type === 'cat') {
+          nd.x = nd.px = nd.ax;
+          nd.y = nd.py = nd.ay;
+        }
+      }
+      for (const nd of this.nodes.values()) {
+        if (nd.parent && nd.type !== 'cat') {
+          nd.x = nd.px = nd.parent.x + nd.ox;
+          nd.y = nd.py = nd.parent.y + nd.oy;
+        }
+        nd.s = 0.82;
+      }
+    }
+
     this.fit = Math.min(1.1, (this.w / 2 - 6) / extX, (this.h / 2 - 6) / extY);
     this.applyView();
+    this.measureLabels();
     this.render(); // ilk kare beklenmeden konumlar yerinde olsun
     this.kick();
   }
@@ -199,16 +224,25 @@ export class Universe {
         <div class="core-sub">Maaşını ayarla</div>`;
     }
     const p = c.free > 0 ? c.spent / c.free : 1;
-    return `${ring(p)}<div class="core-label">${c.remaining < 0 ? 'Aşım' : 'Kalan'}</div>
+    const label = c.current ? (c.remaining < 0 ? 'Aşım' : 'Kalan') : c.remaining < 0 ? 'Açık verdi' : 'Artan';
+    const pct = c.free > 0 ? Math.round((c.spent / c.free) * 100) : 0;
+    return `${ring(p)}<div class="core-label">${label}</div>
       <div class="core-amount">${esc(moneyInt(Math.abs(c.remaining)))}</div>
-      <div class="core-sub">${esc(moneyInt(c.spent))} / ${esc(moneyInt(c.free))}</div>`;
+      <div class="core-sub">${esc(moneyInt(c.spent))} / ${esc(moneyInt(c.free))}</div>
+      <div class="core-pct">%${pct} harcandı</div>`;
   }
 
   catHTML(c, p, d) {
     return `${c.limit > 0 ? ring(p) : ''}
       <span class="cat-icon">${catIcon(c.icon)}</span>
-      <span class="cat-name">${esc(c.name)}</span>
+      <span class="cat-name" style="font-size:${this.nameSize(c.name, d).toFixed(1)}px">${esc(c.name)}</span>
       <span class="cat-amt">${esc(c.total > 0 ? moneyShort(c.total) : '—')}</span>`;
+  }
+
+  /** Kategori adını baloncuğa sığacak yazı boyutu (dünya birimiyle). */
+  nameSize(name, d) {
+    const fit = (d * 0.84) / Math.max(4, name.length * 0.58);
+    return clamp(Math.min(d * 0.15, fit), 7, 15);
   }
 
   upsert(key, type, parent) {
@@ -243,13 +277,27 @@ export class Universe {
   }
 
   /** Baloncuğun altında duran ad etiketi (küçük baloncuklarda da okunsun diye dışarıda). */
-  setLabel(n, text) {
+  setLabel(n, text, sub) {
     if (!n.label) {
       n.label = document.createElement('span');
       n.label.className = 'bubble-label';
       this.labelLayer.append(n.label);
     }
-    if (n.label.textContent !== text) n.label.textContent = text;
+    const html = `${esc(text)}<small>${esc(sub || '')}</small>`;
+    if (n.labelHTML !== html) {
+      n.labelHTML = html;
+      n.label.innerHTML = html;
+      n.lw = 0; // yeniden ölçülecek
+    }
+  }
+
+  /** Etiket boyutlarını ölç (dünya biriminde). */
+  measureLabels() {
+    for (const n of this.nodes.values()) {
+      if (!n.label || n.dead) continue;
+      n.lw = n.label.offsetWidth || 60;
+      n.lh = n.label.offsetHeight || 24;
+    }
   }
 
   setSize(n, d) {
@@ -290,6 +338,10 @@ export class Universe {
     let energy = 0;
     for (let i = 0; i < sub; i++) energy = this.step(dt / sub);
     this.autoFit();
+    if (this.labelsDirty) {
+      this.labelsDirty = false;
+      this.measureLabels();
+    }
     this.render();
 
     const dragging = this.gesture?.node?.dragging;
@@ -302,8 +354,8 @@ export class Universe {
   };
 
   step(dt) {
-    const k = this.reduced ? 260 : 150;
-    const c = this.reduced ? 32 : 17;
+    const k = this.reduced ? 300 : 230;
+    const c = this.reduced ? 36 : 25;
     const list = [...this.nodes.values()];
     let energy = 0;
 
@@ -334,7 +386,7 @@ export class Universe {
         n.y += n.vy * dt;
       }
       const ts = n.type === 'core' || this.expanded ? n.ts : 0.25;
-      const ds = (ts - n.s) * Math.min(1, dt * 9);
+      const ds = (ts - n.s) * Math.min(1, dt * 14);
       n.s += ds;
       energy = Math.max(energy, Math.abs(ds) * 400);
     }
@@ -346,6 +398,8 @@ export class Universe {
         const a = live[i];
         for (let j = i + 1; j < live.length; j++) {
           const b = live[j];
+          // Etiketli harcamalar kutu olarak çarpışır (ad yazıları da baloncuklara binmesin)
+          if ((a.label || b.label) && this.boxCollide(a, b)) continue;
           const dx = b.x - a.x;
           const dy = b.y - a.y;
           // Altında ad etiketi olan harcamalara biraz daha yer bırak
@@ -389,21 +443,66 @@ export class Universe {
   /** Kullanıcı yakınlaştırmadıysa, baloncukların gerçek konumuna göre ekrana sığdır. */
   autoFit() {
     if (this.userView || !this.expanded) return;
-    let extX = 1;
-    let extY = 1;
+    let minX = Infinity;
+    let maxX = -Infinity;
+    let minY = Infinity;
+    let maxY = -Infinity;
     for (const n of this.nodes.values()) {
       if (n.dead || n.s < 0.5) continue;
-      const r = (n.d * n.s) / 2;
-      const labelW = n.label ? 44 : 0;
-      const labelH = n.label ? 14 : 0;
-      extX = Math.max(extX, Math.abs(n.x) + Math.max(r, labelW));
-      extY = Math.max(extY, Math.abs(n.y) + r + labelH);
+      const B = this.box(n);
+      minX = Math.min(minX, B.l);
+      maxX = Math.max(maxX, B.r);
+      minY = Math.min(minY, B.t);
+      maxY = Math.max(maxY, B.b);
     }
-    const target = Math.min(1.1, (this.w / 2 - 6) / extX, (this.h / 2 - 6) / extY);
-    if (Math.abs(target - this.fit) > 0.002) {
-      this.fit += (target - this.fit) * 0.12;
+    if (!isFinite(minX)) return;
+    const pad = 8;
+    const reserve = 84; // sağ alttaki + düğmesi
+    const availH = this.h - pad - reserve;
+    const target = Math.min(1.1, (this.w - pad * 2) / (maxX - minX), availH / (maxY - minY));
+    const bx = -((minX + maxX) / 2) * target;
+    const by = pad + availH / 2 - this.h / 2 - ((minY + maxY) / 2) * target;
+    const k = 0.14;
+    const moved = Math.abs(target - this.fit) > 0.002 || Math.abs(bx - this.baseX) > 0.5 || Math.abs(by - this.baseY) > 0.5;
+    if (moved) {
+      this.fit += (target - this.fit) * k;
+      this.baseX += (bx - this.baseX) * k;
+      this.baseY += (by - this.baseY) * k;
       this.applyView();
     }
+  }
+
+  /** Baloncuk + altındaki etiketi kapsayan kutu. */
+  box(n) {
+    const r = (n.d * n.s) / 2;
+    const w = Math.max(n.d * n.s, n.lw || 0) + 4;
+    return { l: n.x - w / 2, r: n.x + w / 2, t: n.y - r - 2, b: n.y + r + 2 + (n.lh || 0) };
+  }
+
+  /** İki etiketli harcama arasında kutu çarpışması; ayırdıysa true döner. */
+  boxCollide(a, b) {
+    const A = this.box(a);
+    const B = this.box(b);
+    const ox = Math.min(A.r, B.r) - Math.max(A.l, B.l);
+    const oy = Math.min(A.b, B.b) - Math.max(A.t, B.t);
+    if (ox <= 0 || oy <= 0) return true; // çakışma yok
+    const wa = this.invMass(a);
+    const wb = this.invMass(b);
+    const sum = wa + wb;
+    if (!sum) return true;
+    // Daha az çakışan eksende it
+    if (ox < oy) {
+      const dir = a.x < b.x ? -1 : 1;
+      const push = ox * 0.5;
+      a.x += dir * push * (wa / sum);
+      b.x -= dir * push * (wb / sum);
+    } else {
+      const dir = a.y < b.y ? -1 : 1;
+      const push = oy * 0.5;
+      a.y += dir * push * (wa / sum);
+      b.y -= dir * push * (wb / sum);
+    }
+    return true;
   }
 
   invMass(n) {
@@ -449,16 +548,25 @@ export class Universe {
   applyView(animate = false) {
     this.viewport.classList.toggle('animate', animate);
     // Yazılar uzaklaşınca küçülüp okunmaz olmasın
-    this.viewport.style.setProperty('--inv', (1 / this.scale).toFixed(3));
-    this.viewport.style.transform = `translate(${(this.w / 2 + this.panX).toFixed(1)}px,${(this.h / 2 + this.panY).toFixed(1)}px) scale(${this.scale.toFixed(4)})`;
+    const inv = (1 / this.scale).toFixed(3);
+    if (inv !== this.inv) {
+      this.inv = inv;
+      this.viewport.style.setProperty('--inv', inv);
+      // Etiket boyutu ölçeğe bağlı; belirgin değişince yeniden ölç
+      if (!this.measuredInv || Math.abs(inv / this.measuredInv - 1) > 0.04) {
+        this.measuredInv = Number(inv);
+        this.labelsDirty = true;
+      }
+    }
+    this.viewport.style.transform = `translate(${(this.w / 2 + this.baseX + this.panX).toFixed(1)}px,${(this.h / 2 + this.baseY + this.panY).toFixed(1)}px) scale(${this.scale.toFixed(4)})`;
     if (animate) setTimeout(() => this.viewport.classList.remove('animate'), 450);
   }
 
   toWorld(cx, cy) {
     const r = this.stage.getBoundingClientRect();
     return {
-      x: (cx - r.left - this.w / 2 - this.panX) / this.scale,
-      y: (cy - r.top - this.h / 2 - this.panY) / this.scale,
+      x: (cx - r.left - this.w / 2 - this.baseX - this.panX) / this.scale,
+      y: (cy - r.top - this.h / 2 - this.baseY - this.panY) / this.scale,
     };
   }
 
@@ -537,8 +645,8 @@ export class Universe {
         const r = this.pinch.rect;
         const mx = (p1.x + p2.x) / 2 - r.left;
         const my = (p1.y + p2.y) / 2 - r.top;
-        this.panX = mx - this.w / 2 - this.pinch.world.x * this.scale;
-        this.panY = my - this.h / 2 - this.pinch.world.y * this.scale;
+        this.panX = mx - this.w / 2 - this.baseX - this.pinch.world.x * this.scale;
+        this.panY = my - this.h / 2 - this.baseY - this.pinch.world.y * this.scale;
         this.applyView();
         return;
       }
@@ -630,8 +738,8 @@ export class Universe {
         const world = this.toWorld(e.clientX, e.clientY);
         this.zoom = clamp(this.zoom * Math.exp(-e.deltaY * 0.0015), 0.5, 3.5);
         const r = st.getBoundingClientRect();
-        this.panX = e.clientX - r.left - this.w / 2 - world.x * this.scale;
-        this.panY = e.clientY - r.top - this.h / 2 - world.y * this.scale;
+        this.panX = e.clientX - r.left - this.w / 2 - this.baseX - world.x * this.scale;
+        this.panY = e.clientY - r.top - this.h / 2 - this.baseY - world.y * this.scale;
         this.applyView();
       },
       { passive: false }

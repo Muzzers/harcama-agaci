@@ -858,6 +858,18 @@ export function openSettingsSheet(ctx) {
         <div class="fixed"></div>
       </section>
 
+      <section class="group look">
+        <h3>Görünüm</h3>
+        <div class="opt-row"><span>Tema</span>
+          <div class="seg three" data-opt="theme">
+            <button type="button" data-v="auto">Otomatik</button><button type="button" data-v="light">Açık</button><button type="button" data-v="dark">Koyu</button>
+          </div></div>
+        <div class="opt-row"><span>Yazı boyutu</span>
+          <div class="seg" data-opt="fontScale">
+            <button type="button" data-v="1">Normal</button><button type="button" data-v="1.15">Büyük</button>
+          </div></div>
+      </section>
+
       <section class="group">
         <h3>Kategoriler ve aylık limitler <span class="hint">her maaş gününde sıfırlanır</span></h3>
         <div class="list cats-list"></div>
@@ -927,6 +939,20 @@ export function openSettingsSheet(ctx) {
   };
 
   $('.salary-btn').addEventListener('click', () => ctx.open.budget());
+  const drawLook = () => {
+    const st = ctx.state.settings;
+    for (const seg of body.querySelectorAll('.look .seg')) {
+      const cur = String(seg.dataset.opt === 'theme' ? st.theme || 'auto' : Number(st.fontScale) || 1);
+      for (const b of seg.querySelectorAll('button')) b.classList.toggle('on', b.dataset.v === cur);
+    }
+  };
+  $('.look').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-v]');
+    if (!b) return;
+    const opt = b.closest('[data-opt]').dataset.opt;
+    ctx.commit((s) => (s.settings[opt] = opt === 'fontScale' ? Number(b.dataset.v) : b.dataset.v));
+  });
+  drawLook();
   $('.cats-list').addEventListener('change', (e) => {
     const cid = e.target.dataset.limit;
     if (!cid) return;
@@ -1043,6 +1069,7 @@ export function openSettingsSheet(ctx) {
     drawFixed();
     drawCats();
     drawSync();
+    drawLook();
   });
   drawFree();
   drawCats();

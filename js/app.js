@@ -35,7 +35,7 @@ function buildModel(s, period) {
   });
 
   return {
-    core: { hasSalary: salary + incomeTotal > 0, salary, incomeTotal, fixedTotal, free, spent, remaining: free - spent },
+    core: { current: isCurrent(period), hasSalary: salary + incomeTotal > 0, salary, incomeTotal, fixedTotal, free, spent, remaining: free - spent },
     categories,
     count: expenses.length,
   };
@@ -211,7 +211,21 @@ const universe = new Universe(stage, {
 
 const $ = (id) => document.getElementById(id);
 
+/** Tema ve yazı boyutu ayarlarını sayfaya uygular. */
+function applyLook() {
+  const root = document.documentElement;
+  const theme = state.settings.theme || 'auto';
+  if (theme === 'auto') delete root.dataset.theme;
+  else root.dataset.theme = theme;
+  const fs = Number(state.settings.fontScale) || 1;
+  root.style.fontSize = `${16 * fs}px`;
+  root.style.setProperty('--fs', String(fs));
+  const dark = theme === 'dark' || (theme === 'auto' && matchMedia('(prefers-color-scheme: dark)').matches);
+  for (const m of document.querySelectorAll('meta[name=theme-color]')) m.content = dark ? '#0a0b1c' : '#eef0fa';
+}
+
 function render() {
+  applyLook();
   const model = buildModel(state, viewPeriod);
   universe.setData(model);
 
