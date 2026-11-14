@@ -411,6 +411,7 @@ export function openCategorySheet(ctx, id) {
       </div>
       ${cat.limit > 0 ? `<div class="meter ${state}"><i style="width:${Math.min(100, p * 100).toFixed(1)}%"></i></div>` : ''}
       <p class="status ${state}">${esc(status)}</p>
+      <label class="field money-field limit-top"><span class="lbl">Aylık limit</span><span class="prefix">₺</span><input name="limit" inputmode="decimal" value="${esc(amountInput(cat.limit))}" placeholder="Limitsiz" enterkeyhint="done"></label>
 
       <button class="secondary add-here" type="button">${ICON.plus}<span>${esc(cat.name)} harcaması ekle</span></button>
 
@@ -422,7 +423,6 @@ export function openCategorySheet(ctx, id) {
         <div class="form">
           <label class="field"><span class="lbl">Ad</span><input name="name" value="${esc(cat.name)}"></label>
           <div class="icon-grid">${ICON_KEYS.map((k) => `<button type="button" class="icon-pick ${k === cat.icon ? 'on' : ''}" data-icon="${k}" style="--c:${cat.color}" aria-label="Simge ${k}">${catIcon(k)}</button>`).join('')}</div>
-          <label class="field money-field"><span class="lbl">Aylık limit</span><span class="prefix">₺</span><input name="limit" inputmode="decimal" value="${esc(amountInput(cat.limit))}" placeholder="Limitsiz"></label>
           <div class="swatches">${PALETTE.map((c) => `<button type="button" class="swatch ${c === cat.color ? 'on' : ''}" data-color="${c}" style="--c:${c}" aria-label="Renk ${c}"></button>`).join('')}</div>
           <div class="label-row"><span>Anahtar kelimeler</span><span class="hint">otomatik gruplama</span></div>
           <div class="chips kw">${(cat.keywords || []).map((k, i) => `<span class="chip kw-chip">${esc(k)}<button type="button" data-kw="${i}" aria-label="${esc(k)} kaldır">×</button></span>`).join('') || '<span class="hint">Henüz kelime yok</span>'}</div>
@@ -445,6 +445,7 @@ export function openCategorySheet(ctx, id) {
     });
     $('[name=name]').addEventListener('change', (e) => upd((c) => (c.name = e.target.value.trim() || c.name)));
     $('[name=limit]').addEventListener('change', (e) => upd((c) => (c.limit = parseAmount(e.target.value) || 0)));
+    $('[name=limit]').addEventListener('keydown', (e) => e.key === 'Enter' && e.target.blur());
     $('.swatches').addEventListener('click', (e) => {
       const b = e.target.closest('.swatch');
       if (b) upd((c) => (c.color = b.dataset.color));
@@ -607,7 +608,7 @@ export function openSettingsSheet(ctx) {
       </section>
 
       <section class="group">
-        <h3>Kategoriler <span class="hint">limitler her maaş gününde sıfırlanır</span></h3>
+        <h3>Kategoriler ve aylık limitler <span class="hint">her maaş gününde sıfırlanır</span></h3>
         <div class="list cats-list"></div>
         <form class="inline-add new-cat">
           <input name="name" placeholder="Yeni kategori (örn. Evcil hayvan)">
@@ -654,11 +655,13 @@ export function openSettingsSheet(ctx) {
     const cats = ctx.categories();
     $('.cats-list').innerHTML = cats
       .map(
-        (c) => `<button type="button" class="row" data-cat="${c.id}">
-          <span class="row-icon" style="--c:${c.color}">${catIcon(c.icon)}</span>
-          <span class="row-main"><b>${esc(c.name)}</b><small>${c.keywords.length} anahtar kelime</small></span>
-          <span class="row-amt">${c.limit > 0 ? esc(money(c.limit)) : 'limitsiz'}</span>${ICON.chevron}
-        </button>`
+        (c) => `<div class="row cat-row">
+          <button type="button" class="cat-open" data-cat="${c.id}">
+            <span class="row-icon" style="--c:${c.color}">${catIcon(c.icon)}</span>
+            <span class="row-main"><b>${esc(c.name)}</b><small>düzenle ›</small></span>
+          </button>
+          <label class="limit-input"><input data-limit="${c.id}" inputmode="decimal" value="${esc(amountInput(c.limit))}" placeholder="limitsiz" aria-label="${esc(c.name)} aylık limiti" enterkeyhint="done"><span>₺</span></label>
+        </div>`
       )
       .join('');
     const total = cats.reduce((s, c) => s + (c.limit || 0), 0);
@@ -686,6 +689,21 @@ export function openSettingsSheet(ctx) {
   $('.cats-list').addEventListener('click', (e) => {
     const row = e.target.closest('[data-cat]');
     if (row) ctx.open.category(row.dataset.cat);
+  });
+  $('.cats-list').addEventListener('change', (e) => {
+    const id = e.target.dataset.limit;
+    if (!id) return;
+    const v = e.target.value.trim();
+    const limit = v ? parseAmount(v) : 0;
+    if (v && limit == null) {
+      toast('Tutar anlaşılmadı', 'bad');
+      return;
+    }
+    ctx.commit((s) => (byId(s.categories, id).limit = limit || 0));
+    toast('Limit kaydedildi');
+  });
+  $('.cats-list').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.dataset.limit) e.target.blur();
   });
   $('.new-cat').addEventListener('submit', (e) => {
     e.preventDefault();

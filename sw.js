@@ -1,6 +1,6 @@
 // Çevrimdışı çalışma için basit servis çalışanı.
 // Uygulama dosyalarında değişiklik yaptığında VERSION'ı artır.
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = `harcama-agaci-${VERSION}`;
 const ASSETS = [
   './',
