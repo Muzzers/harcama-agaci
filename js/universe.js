@@ -134,9 +134,12 @@ export class Universe {
       node.ay = ay;
       node.el.style.setProperty('--c', c.color);
       if (node.line) node.line.style.stroke = c.color;
+      const p = c.limit > 0 ? c.total / c.limit : 0;
+      node.el.classList.toggle('over', c.limit > 0 && c.total > c.limit);
+      node.el.classList.toggle('near', p >= 0.8 && p <= 1);
       node.el.classList.toggle('empty', c.total === 0);
-      node.el.setAttribute('aria-label', `${c.name}: ${moneyShort(c.total)}`);
-      this.setHTML(node, this.catHTML(c, d));
+      node.el.setAttribute('aria-label', `${c.name}: ${moneyShort(c.total)}${c.limit ? ` / limit ${moneyShort(c.limit)}` : ''}`);
+      this.setHTML(node, this.catHTML(c, p, d));
       seen.add(key);
       grow(ax, ay, d / 2);
 
@@ -201,8 +204,8 @@ export class Universe {
       <div class="core-sub">${esc(moneyInt(c.spent))} / ${esc(moneyInt(c.free))}</div>`;
   }
 
-  catHTML(c, d) {
-    return `
+  catHTML(c, p, d) {
+    return `${c.limit > 0 ? ring(p) : ''}
       <span class="cat-icon">${catIcon(c.icon)}</span>
       <span class="cat-name">${esc(c.name)}</span>
       <span class="cat-amt">${esc(c.total > 0 ? moneyShort(c.total) : '—')}</span>`;

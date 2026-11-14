@@ -224,55 +224,7 @@ function render() {
   hint.hidden = model.count > 0;
   hint.textContent = current ? 'İlk harcamanı eklemek için + düğmesine dokun. “Starbucks 150” yazman yeterli.' : 'Bu dönemde harcama yok.';
 
-  renderDaily(model, current);
   for (const fn of listeners) fn();
-}
-
-function renderDaily(model, current) {
-  const el = $('daily');
-  const { core } = model;
-  el.classList.remove('good', 'warn', 'bad');
-
-  if (!core.hasSalary) {
-    el.innerHTML = `<span class="daily-main"><b>Maaşını gir</b></span>
-      <span class="daily-sub">Günde ne kadar harcayabileceğini hesaplayayım</span>`;
-    el.onclick = () => ctx.open.budget();
-    return;
-  }
-  el.onclick = () => ctx.open.list();
-
-  if (!current) {
-    const left = core.remaining;
-    el.classList.add(left >= 0 ? 'good' : 'bad');
-    el.innerHTML = `<span class="daily-main"><b>${left >= 0 ? `${money(left)} arttı` : `${money(-left)} aşıldı`}</b></span>
-      <span class="daily-sub">Dönem kapandı · ${moneyInt(core.spent)} harcandı</span>`;
-    return;
-  }
-
-  const days = Math.max(1, daysLeft(viewPeriod));
-  const perDay = core.remaining / days;
-  const expected = (core.free * daysElapsed(viewPeriod)) / totalDays(viewPeriod);
-  const ahead = core.spent - expected;
-  const pace = core.free > 0 ? Math.min(1, Math.max(0, core.spent / core.free)) : 1;
-  const time = daysElapsed(viewPeriod) / totalDays(viewPeriod);
-
-  let status;
-  if (core.remaining < 0) {
-    el.classList.add('bad');
-    status = `Bütçe ${moneyInt(-core.remaining)} aşıldı`;
-  } else if (ahead > core.free * 0.05) {
-    el.classList.add('warn');
-    status = `Plandan ${moneyInt(ahead)} hızlı gidiyorsun`;
-  } else {
-    el.classList.add('good');
-    status = ahead < 0 ? `Planın ${moneyInt(-ahead)} gerisindesin` : 'Plana uygun gidiyorsun';
-  }
-
-  el.innerHTML = `
-    <span class="daily-main"><b>${core.remaining < 0 ? '0 ₺' : moneyInt(perDay)}</b><small>/ gün</small>
-      <em>maaşa ${days} gün</em></span>
-    <span class="daily-sub">${status}</span>
-    <span class="pace" aria-hidden="true"><i style="width:${(pace * 100).toFixed(1)}%"></i><s style="left:${(time * 100).toFixed(1)}%"></s></span>`;
 }
 
 // ---------- Olaylar ----------

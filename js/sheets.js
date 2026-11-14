@@ -246,6 +246,8 @@ export function openAddSheet(ctx, { categoryId = null, mode = 'expense' } = {}) 
       return;
     }
     const cat = r.chosen;
+    const p0 = ctx.period();
+    const before = cat && inPeriod(date, p0) ? ctx.state.expenses.filter((e) => e.categoryId === cat.id && inPeriod(e.date, p0)).reduce((s, e) => s + e.amount, 0) : null;
     const shouldLearn = manualId && cat && r.suggested?.id !== cat.id;
     const photo = receipt.get();
     const exp = { id: uid(), title: r.title, amount: r.amount, date: date.toISOString(), categoryId: cat?.id || null, ...(photo ? { receipt: true } : {}) };
@@ -260,7 +262,12 @@ export function openAddSheet(ctx, { categoryId = null, mode = 'expense' } = {}) 
     );
     sheet.close();
 
-    toast(`${r.title} → ${cat?.name || 'eklendi'}`);
+    const after = before == null ? null : before + r.amount;
+    if (cat && cat.limit > 0 && after != null && after > cat.limit && before <= cat.limit) {
+      toast(`${cat.name} limiti aşıldı (${moneyShort(after)} / ${moneyShort(cat.limit)})`, 'bad');
+    } else {
+      toast(`${r.title} → ${cat?.name || 'eklendi'}`);
+    }
   });
 
   const sheet = openSheet({ title: 'Hızlı Ekle', body });
@@ -462,6 +469,9 @@ export function openCategorySheet(ctx, id) {
     const list = ctx.state.expenses.filter((e) => e.categoryId === id && inPeriod(e.date, period)).sort((a, b) => new Date(b.date) - new Date(a.date));
     const total = list.reduce((s, e) => s + e.amount, 0);
     const allSpent = ctx.state.expenses.filter((e) => inPeriod(e.date, period)).reduce((s, e) => s + e.amount, 0);
+    const p = cat.limit > 0 ? total / cat.limit : 0;
+    const lstate = cat.limit <= 0 ? '' : p > 1 ? 'bad' : p >= 0.8 ? 'warn' : 'good';
+    const status = cat.limit <= 0 ? '' : p > 1 ? `Limit ${money(total - cat.limit)} aşıldı` : `Limite ${money(cat.limit - total)} kaldı`;
 
     body.innerHTML = `
       <div class="cat-hero" style="--c:${cat.color}">
@@ -471,6 +481,10 @@ export function openCategorySheet(ctx, id) {
           <div class="cat-hero-sub">${esc(periodLabel(period))}${allSpent > 0 ? ` · harcamanın %${Math.round((total / allSpent) * 100)}'i` : ''}</div>
         </div>
       </div>
+
+      ${cat.limit > 0 ? `<div class="meter ${lstate}"><i style="width:${Math.min(100, p * 100).toFixed(1)}%"></i></div>
+      <p class="status ${lstate}">${esc(status)}</p>` : ''}
+      <label class="field money-field limit-top"><span class="lbl">Aylık limit</span><span class="prefix">₺</span><input name="limit" inputmode="decimal" value="${esc(amountInput(cat.limit))}" placeholder="Limit yok" enterkeyhint="done"></label>
 
       <button class="secondary add-here" type="button">${ICON.plus}<span>${esc(cat.name)} harcaması ekle</span></button>
 
@@ -498,6 +512,11 @@ export function openCategorySheet(ctx, id) {
     });
 
     const upd = (fn) => ctx.commit((s) => fn(byId(s.categories, id), s));
+    $('[name=limit]').addEventListener('change', (e) => {
+      upd((c) => (c.limit = parseAmount(e.target.value) || 0));
+      toast('Limit kaydedildi');
+    });
+    $('[name=limit]').addEventListener('keydown', (e) => e.key === 'Enter' && e.target.blur());
     $('.icon-grid').addEventListener('click', (e) => {
       const b = e.target.closest('[data-icon]');
       if (b) upd((c) => (c.icon = b.dataset.icon));
@@ -840,7 +859,7 @@ export function openSettingsSheet(ctx) {
       </section>
 
       <section class="group">
-        <h3>Kategoriler <span class="hint">bu dönemki harcama</span></h3>
+        <h3>Kategoriler ve aylık limitler <span class="hint">her maaş gününde sıfırlanır</span></h3>
         <div class="list cats-list"></div>
         <form class="inline-add new-cat">
           <input name="name" placeholder="Yeni kategori (örn. Evcil hayvan)">
@@ -892,16 +911,37 @@ export function openSettingsSheet(ctx) {
     const cats = ctx.categories();
     $('.cats-list').innerHTML = cats
       .map(
-        (c) => `<button type="button" class="row" data-cat="${c.id}">
-          <span class="row-icon" style="--c:${c.color}">${catIcon(c.icon)}</span>
-          <span class="row-main"><b>${esc(c.name)}</b><small>${c.keywords.length} anahtar kelime</small></span>
-          <span class="row-amt">${esc(money(spentIn(c.id)))}</span>${ICON.chevron}
-        </button>`
+        (c) => {
+          const spent = spentIn(c.id);
+          const over = c.limit > 0 && spent > c.limit;
+          return `<div class="row cat-row">
+          <button type="button" class="cat-open" data-cat="${c.id}">
+            <span class="row-icon" style="--c:${c.color}">${catIcon(c.icon)}</span>
+            <span class="row-main"><b>${esc(c.name)}</b><small class="${over ? 'over' : ''}">bu dönem ${esc(money(spent))}</small></span>
+          </button>
+          <label class="limit-input"><input data-limit="${c.id}" inputmode="decimal" value="${esc(amountInput(c.limit))}" placeholder="limit yok" aria-label="${esc(c.name)} aylık limiti" enterkeyhint="done"><span>₺</span></label>
+        </div>`;
+        }
       )
       .join('');
   };
 
   $('.salary-btn').addEventListener('click', () => ctx.open.budget());
+  $('.cats-list').addEventListener('change', (e) => {
+    const cid = e.target.dataset.limit;
+    if (!cid) return;
+    const v = e.target.value.trim();
+    const limit = v ? parseAmount(v) : 0;
+    if (v && limit == null) {
+      toast('Tutar anlaşılmadı', 'bad');
+      return;
+    }
+    ctx.commit((s) => (byId(s.categories, cid).limit = limit || 0));
+    toast(limit ? 'Limit kaydedildi' : 'Limit kaldırıldı');
+  });
+  $('.cats-list').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.dataset.limit) e.target.blur();
+  });
   $('[name=payday]').addEventListener('change', (e) =>
     ctx.commit((s) => {
       s.settings.payday = Number(e.target.value) || 15;

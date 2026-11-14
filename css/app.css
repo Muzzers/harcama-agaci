@@ -2269,3 +2269,30 @@ button.period-label:active {
   color: rgba(255, 255, 255, 0.6);
   font-size: 14px;
 }
+
+
+/* Alt çubukta sadece + düğmesi: sahnenin üstünde sağ altta durur */
+#app {
+  grid-template-rows: auto 1fr;
+}
+
+.bottombar {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  padding: 0 18px calc(var(--safe-b) + 18px);
+  pointer-events: none;
+}
+
+.bottombar .fab {
+  pointer-events: auto;
+}
+
+.stage-hint {
+  bottom: calc(var(--safe-b) + 96px);
+}
+
+.cat-open small.over {
+  color: var(--bad);
+  font-weight: 600;
+}
