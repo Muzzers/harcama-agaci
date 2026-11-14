@@ -3,7 +3,7 @@ import { periodFor, shiftPeriod, inPeriod, isCurrent, daysLeft, daysElapsed, tot
 import { money, moneyShort, moneyInt } from './format.js';
 import { Universe } from './universe.js';
 import { toast, trackKeyboard } from './ui.js';
-import { openAddSheet, openExpenseSheet, openCategorySheet, openSettingsSheet, openListSheet, openOnboarding } from './sheets.js';
+import { openAddSheet, openExpenseSheet, openIncomeSheet, openCategorySheet, openSettingsSheet, openListSheet, openOnboarding } from './sheets.js';
 
 let state = load();
 let viewPeriod = periodFor(new Date(), state.settings.payday);
@@ -19,7 +19,8 @@ function buildModel(s, period) {
   const expenses = s.expenses.filter((e) => inPeriod(e.date, period));
   const salary = Number(s.settings.salary) || 0;
   const fixedTotal = s.fixed.reduce((sum, f) => sum + (Number(f.amount) || 0), 0);
-  const free = salary - fixedTotal;
+  const incomeTotal = (s.incomes || []).filter((i) => inPeriod(i.date, period)).reduce((sum, i) => sum + i.amount, 0);
+  const free = salary + incomeTotal - fixedTotal;
   const spent = expenses.reduce((sum, e) => sum + e.amount, 0);
 
   const categories = sortedCategories(s).map((c) => {
@@ -28,7 +29,7 @@ function buildModel(s, period) {
   });
 
   return {
-    core: { hasSalary: salary > 0, salary, fixedTotal, free, spent, remaining: free - spent },
+    core: { hasSalary: salary + incomeTotal > 0, salary, incomeTotal, fixedTotal, free, spent, remaining: free - spent },
     categories,
     count: expenses.length,
   };
@@ -71,6 +72,7 @@ const ctx = {
   open: {
     add: (opts) => openAddSheet(ctx, opts),
     expense: (id) => openExpenseSheet(ctx, id),
+    income: (id) => openIncomeSheet(ctx, id),
     category: (id) => openCategorySheet(ctx, id),
     settings: () => openSettingsSheet(ctx),
     list: () => openListSheet(ctx),

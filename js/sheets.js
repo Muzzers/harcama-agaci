@@ -32,13 +32,29 @@ function expenseRow(e, cat) {
   </button>`;
 }
 
+function incomeRow(i) {
+  return `<button type="button" class="row income" data-inc="${i.id}">
+    <span class="row-icon" style="--c:var(--good)">${catIcon('wallet')}</span>
+    <span class="row-main"><b>${esc(i.title)}</b><small>Gelir · ${esc(shortDate(i.date))} ${esc(timeLabel(i.date))}</small></span>
+    <span class="row-amt plus">+${esc(money(i.amount))}</span>
+  </button>`;
+}
+
+function fixedRow(f) {
+  return `<button type="button" class="row" data-fixed="${f.id}">
+    <span class="row-main"><b>${esc(f.title)}</b><small>her dönem</small></span>
+    <span class="row-amt">${esc(money(f.amount))}</span>${ICON.chevron}
+  </button>`;
+}
+
 // =====================================================================
 // Hızlı ekle
 // =====================================================================
 
-export function openAddSheet(ctx, { categoryId = null } = {}) {
+export function openAddSheet(ctx, { categoryId = null, mode = 'expense' } = {}) {
   const cats = ctx.categories();
   let manualId = categoryId;
+  let kind = mode;
 
   const recent = [];
   const seen = new Set();
@@ -52,6 +68,10 @@ export function openAddSheet(ctx, { categoryId = null } = {}) {
 
   const body = h(`
     <form class="form" autocomplete="off" novalidate>
+      <div class="seg" role="tablist" aria-label="Tür">
+        <button type="button" role="tab" data-kind="expense">Harcama</button>
+        <button type="button" role="tab" data-kind="income">Gelir</button>
+      </div>
       <label class="field hero">
         <span class="sr">Ne aldın?</span>
         <input name="title" placeholder="Starbucks 150" enterkeyhint="next" autocapitalize="words" spellcheck="false">
@@ -67,6 +87,7 @@ export function openAddSheet(ctx, { categoryId = null } = {}) {
       </div>
       <p class="detected" aria-live="polite"></p>
 
+      <div class="exp-only">
       <div class="label-row"><span>Kategori</span><span class="badge"></span></div>
       <div class="chips cats">${catChips(cats, null)}</div>
 
@@ -74,6 +95,7 @@ export function openAddSheet(ctx, { categoryId = null } = {}) {
       <div class="chips recent">${recent
         .map((e) => `<button type="button" class="chip ghost" data-recent="${e.id}">${esc(e.title)} <small>${esc(moneyShort(e.amount))}</small></button>`)
         .join('')}</div>` : ''}
+      </div>
 
       <button class="primary" type="submit" disabled>Ekle</button>
     </form>`);
@@ -97,6 +119,13 @@ export function openAddSheet(ctx, { categoryId = null } = {}) {
 
   const refresh = () => {
     const r = read();
+    const income = kind === 'income';
+    body.classList.toggle('is-income', income);
+    for (const b of body.querySelectorAll('.seg button')) {
+      b.classList.toggle('on', b.dataset.kind === kind);
+      b.setAttribute('aria-selected', b.dataset.kind === kind);
+    }
+    titleIn.placeholder = income ? 'İkramiye 5000' : 'Starbucks 150';
     for (const chip of body.querySelectorAll('.cats .chip')) {
       const on = r.chosen?.id === chip.dataset.id;
       chip.classList.toggle('on', on);
@@ -113,11 +142,18 @@ export function openAddSheet(ctx, { categoryId = null } = {}) {
           : '';
     const ok = !!r.title && r.amount > 0;
     submit.disabled = !ok;
-    submit.textContent = ok ? `Ekle · ${money(r.amount)}` : 'Ekle';
+    submit.textContent = ok ? `${income ? 'Gelir ekle' : 'Ekle'} · ${money(r.amount)}` : income ? 'Gelir ekle' : 'Ekle';
   };
 
   titleIn.addEventListener('input', refresh);
   amtIn.addEventListener('input', refresh);
+  $('.seg').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-kind]');
+    if (!b) return;
+    kind = b.dataset.kind;
+    refresh();
+    titleIn.focus();
+  });
   titleIn.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -151,6 +187,12 @@ export function openAddSheet(ctx, { categoryId = null } = {}) {
     const r = read();
     if (!r.title || !(r.amount > 0)) return;
     const date = fromDateInput(dateIn.value);
+    if (kind === 'income') {
+      ctx.commit((s) => (s.incomes = s.incomes || []).push({ id: uid(), title: r.title, amount: r.amount, date: date.toISOString() }), { focusDate: date });
+      sheet.close();
+      toast(`Gelir eklendi · +${money(r.amount)}`);
+      return;
+    }
     const cat = r.chosen;
     const shouldLearn = manualId && cat && r.suggested?.id !== cat.id;
     const exp = { id: uid(), title: r.title, amount: r.amount, date: date.toISOString(), categoryId: cat?.id || null };
@@ -251,6 +293,84 @@ export function openExpenseSheet(ctx, id) {
   });
 
   const sheet = openSheet({ title: 'Harcama', body });
+  return sheet;
+}
+
+// =====================================================================
+// Gelir düzenle
+// =====================================================================
+
+export function openIncomeSheet(ctx, id) {
+  const inc = byId(ctx.state.incomes || [], id);
+  if (!inc) return;
+  const body = h(`
+    <form class="form" autocomplete="off" novalidate>
+      <label class="field"><span class="lbl">Açıklama</span><input name="title" value="${esc(inc.title)}" autocapitalize="words"></label>
+      <div class="field-row">
+        <label class="field money-field"><span class="prefix">₺</span><input name="amount" inputmode="decimal" value="${esc(amountInput(inc.amount))}"></label>
+        <label class="field date-field"><input name="date" type="date" value="${toDateInput(inc.date)}"></label>
+      </div>
+      <p class="hint">Gelirler, tarihinin düştüğü dönemin serbest parasına eklenir.</p>
+      <button class="primary" type="submit">Kaydet</button>
+      <button class="danger-btn" type="button">${ICON.trash}<span>Geliri sil</span></button>
+    </form>`);
+  const $ = (s) => body.querySelector(s);
+  body.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const amount = parseAmount($('[name=amount]').value);
+    if (!(amount > 0)) {
+      toast('Tutar anlaşılmadı', 'bad');
+      return;
+    }
+    const title = $('[name=title]').value.trim() || inc.title;
+    const date = fromDateInput($('[name=date]').value, inc.date);
+    ctx.commit((s) => Object.assign(byId(s.incomes, id) || {}, { title, amount, date: date.toISOString() }), { focusDate: date });
+    sheet.close();
+    toast('Kaydedildi');
+  });
+  confirmButton($('.danger-btn'), 'Silmek için tekrar dokun', () => {
+    ctx.commit((s) => (s.incomes = s.incomes.filter((x) => x.id !== id)));
+    sheet.close();
+    toast('Gelir silindi');
+  });
+  const sheet = openSheet({ title: 'Gelir', body });
+  return sheet;
+}
+
+// =====================================================================
+// Sabit gider düzenle
+// =====================================================================
+
+export function openFixedSheet(ctx, id) {
+  const f = byId(ctx.state.fixed, id);
+  if (!f) return;
+  const body = h(`
+    <form class="form" autocomplete="off" novalidate>
+      <label class="field"><span class="lbl">Ad</span><input name="title" value="${esc(f.title)}" autocapitalize="words"></label>
+      <label class="field money-field"><span class="lbl">Aylık tutar</span><span class="prefix">₺</span><input name="amount" inputmode="decimal" value="${esc(amountInput(f.amount))}"></label>
+      <p class="hint">Sabit giderler her dönem maaştan düşülür. Değişiklik geçmiş dönemlere de yansır.</p>
+      <button class="primary" type="submit">Kaydet</button>
+      <button class="danger-btn" type="button">${ICON.trash}<span>Sabit gideri sil</span></button>
+    </form>`);
+  const $ = (s) => body.querySelector(s);
+  body.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const amount = parseAmount($('[name=amount]').value);
+    if (!(amount > 0)) {
+      toast('Tutar anlaşılmadı', 'bad');
+      return;
+    }
+    const title = $('[name=title]').value.trim() || f.title;
+    ctx.commit((s) => Object.assign(byId(s.fixed, id) || {}, { title, amount }));
+    sheet.close();
+    toast('Kaydedildi');
+  });
+  confirmButton($('.danger-btn'), 'Silmek için tekrar dokun', () => {
+    ctx.commit((s) => (s.fixed = s.fixed.filter((x) => x.id !== id)));
+    sheet.close();
+    toast('Sabit gider silindi');
+  });
+  const sheet = openSheet({ title: 'Sabit gider', body });
   return sheet;
 }
 
@@ -375,6 +495,7 @@ export function openListSheet(ctx) {
     <div>
       <label class="field search">${ICON.search}<input type="search" placeholder="Ara" autocapitalize="none"></label>
       <div class="summary"></div>
+      <button class="secondary wide add-income" type="button">${ICON.plus}<span>Gelir ekle</span></button>
       <div class="list grouped"></div>
     </div>`);
   const input = body.querySelector('input');
@@ -384,15 +505,21 @@ export function openListSheet(ctx) {
     const period = ctx.period();
     const cats = ctx.state.categories;
     const q = normalize(input.value);
-    const items = ctx.state.expenses
+    const exps = ctx.state.expenses
       .filter((e) => inPeriod(e.date, period))
       .filter((e) => !q || normalize(e.title).includes(q) || normalize(byId(cats, e.categoryId)?.name).includes(q))
-      .sort((a, b) => new Date(b.date) - new Date(a.date));
-    const total = items.reduce((s, e) => s + e.amount, 0);
-    body.querySelector('.summary').innerHTML = `<span>${periodLabel(period)}</span><b>${esc(money(total))}</b><span>${items.length} harcama</span>`;
+      .map((e) => ({ ...e, kind: 'exp' }));
+    const incs = (ctx.state.incomes || [])
+      .filter((i) => inPeriod(i.date, period))
+      .filter((i) => !q || normalize(i.title).includes(q) || 'gelir'.includes(q))
+      .map((i) => ({ ...i, kind: 'inc' }));
+    const items = [...exps, ...incs].sort((a, b) => new Date(b.date) - new Date(a.date));
+    const total = exps.reduce((s, e) => s + e.amount, 0);
+    const incTotal = incs.reduce((s, i) => s + i.amount, 0);
+    body.querySelector('.summary').innerHTML = `<span>${periodLabel(period)}</span><b>${esc(money(total))}</b><span>${exps.length} harcama${incs.length ? ` · <em class="plus">+${esc(money(incTotal))} gelir</em>` : ''}</span>`;
 
     if (!items.length) {
-      listEl.innerHTML = `<p class="empty">${q ? 'Sonuç yok.' : 'Bu dönemde harcama yok.'}</p>`;
+      listEl.innerHTML = `<p class="empty">${q ? 'Sonuç yok.' : 'Bu dönemde hareket yok.'}</p>`;
       return;
     }
     const groups = new Map();
@@ -403,8 +530,8 @@ export function openListSheet(ctx) {
     }
     listEl.innerHTML = [...groups.values()]
       .map(
-        (g) => `<div class="day"><div class="day-head"><span>${esc(dayLabel(g[0].date))}</span><span>${esc(money(g.reduce((s, e) => s + e.amount, 0)))}</span></div>
-        ${g.map((e) => expenseRow(e, byId(cats, e.categoryId))).join('')}</div>`
+        (g) => `<div class="day"><div class="day-head"><span>${esc(dayLabel(g[0].date))}</span><span>${esc(money(g.filter((x) => x.kind === 'exp').reduce((s, e) => s + e.amount, 0)))}</span></div>
+        ${g.map((e) => (e.kind === 'inc' ? incomeRow(e) : expenseRow(e, byId(cats, e.categoryId)))).join('')}</div>`
       )
       .join('');
   };
@@ -413,10 +540,13 @@ export function openListSheet(ctx) {
   listEl.addEventListener('click', (e) => {
     const row = e.target.closest('[data-exp]');
     if (row) ctx.open.expense(row.dataset.exp);
+    const inc = e.target.closest('[data-inc]');
+    if (inc) ctx.open.income(inc.dataset.inc);
   });
+  body.querySelector('.add-income').addEventListener('click', () => ctx.open.add({ mode: 'income' }));
   const unsubscribe = ctx.subscribe(draw);
   draw();
-  return openSheet({ title: 'Harcamalar', body, onClose: unsubscribe, className: 'tall' });
+  return openSheet({ title: 'Hareketler', body, onClose: unsubscribe, className: 'tall' });
 }
 
 // =====================================================================
@@ -429,12 +559,7 @@ function fixedEditor(ctx, container) {
     const total = fixed.reduce((s, f) => s + f.amount, 0);
     container.innerHTML = `
       <div class="list compact">
-        ${fixed
-          .map(
-            (f) => `<div class="row static"><span class="row-main"><b>${esc(f.title)}</b></span><span class="row-amt">${esc(money(f.amount))}</span>
-            <button type="button" class="icon-btn small" data-del="${f.id}" aria-label="${esc(f.title)} sil">${ICON.close}</button></div>`
-          )
-          .join('') || '<p class="empty small">Kira, fatura, kredi taksiti gibi her ay ödediğin şeyler.</p>'}
+        ${fixed.map(fixedRow).join('') || '<p class="empty small">Kira, fatura, kredi taksiti gibi her ay ödediğin şeyler.</p>'}
       </div>
       <form class="inline-add">
         <input name="title" placeholder="Kira 12000" autocapitalize="words">
@@ -443,8 +568,8 @@ function fixedEditor(ctx, container) {
       ${fixed.length ? `<p class="hint right">Toplam sabit: <b>${esc(money(total))}</b></p>` : ''}`;
   };
   container.addEventListener('click', (e) => {
-    const b = e.target.closest('[data-del]');
-    if (b) ctx.commit((s) => (s.fixed = s.fixed.filter((f) => f.id !== b.dataset.del)));
+    const b = e.target.closest('[data-fixed]');
+    if (b) openFixedSheet(ctx, b.dataset.fixed);
   });
   container.addEventListener('submit', (e) => {
     e.preventDefault();
@@ -518,8 +643,10 @@ export function openSettingsSheet(ctx) {
     const st = ctx.state;
     const fixed = st.fixed.reduce((s, f) => s + f.amount, 0);
     const salary = st.settings.salary || 0;
+    const p = ctx.period();
+    const extra = (st.incomes || []).filter((i) => inPeriod(i.date, p)).reduce((s, i) => s + i.amount, 0);
     $('.free-box').innerHTML = salary
-      ? `<span>Maaş ${esc(money(salary))}</span><span>− Sabit ${esc(money(fixed))}</span><b>= Serbest ${esc(money(salary - fixed))}</b>`
+      ? `<span>Maaş ${esc(money(salary))}</span>${extra ? `<span>+ Ek gelir ${esc(money(extra))}</span>` : ''}<span>− Sabit ${esc(money(fixed))}</span><b>= Serbest ${esc(money(salary + extra - fixed))}</b>`
       : '<span class="hint">Maaşını girince “kalan para” ve “günlük harcayabileceğin” hesaplanır.</span>';
   };
 
@@ -654,15 +781,18 @@ export function openImportSheet(ctx) {
   const $ = (s) => body.querySelector(s);
 
   const exists = (r) =>
-    ctx.state.expenses.some((e) => Math.abs(e.amount - r.amount) < 0.01 && toDateInput(e.date) === toDateInput(r.date) && normalize(e.title) === normalize(r.title));
+    (r.income ? ctx.state.incomes || [] : ctx.state.expenses).some((e) => Math.abs(e.amount - r.amount) < 0.01 && toDateInput(e.date) === toDateInput(r.date) && normalize(e.title) === normalize(r.title));
 
   const drawPreview = () => {
     if (!rows.length) {
       $('.preview').innerHTML = '<p class="empty">Tutar içeren satır bulunamadı.</p>';
       return;
     }
-    const n = rows.filter((r) => r.on).length;
-    const total = rows.filter((r) => r.on).reduce((s, r) => s + r.amount, 0);
+    const on = rows.filter((r) => r.on);
+    const nExp = on.filter((r) => !r.income).length;
+    const nInc = on.length - nExp;
+    const n = on.length;
+    const label = [nExp ? `${nExp} harcama` : '', nInc ? `${nInc} gelir` : ''].filter(Boolean).join(' + ');
     $('.preview').innerHTML = `
       <div class="label-row"><span>${rows.length} satır bulundu</span><span class="hint">işaretlileri ekle</span></div>
       <div class="list import-list">
@@ -671,16 +801,16 @@ export function openImportSheet(ctx) {
             (r, i) => `<div class="row import-row ${r.on ? '' : 'off'}">
               <input type="checkbox" data-i="${i}" ${r.on ? 'checked' : ''} aria-label="${esc(r.title)} ekle">
               <span class="row-main"><b>${esc(r.title)}</b>
-                <small>${esc(shortDate(r.date))}${r.income ? ' · gelir gibi görünüyor' : ''}${r.dup ? ' · zaten ekli' : ''}</small></span>
+                <small>${esc(shortDate(r.date))}${r.income ? ' · gelir olarak eklenir' : ''}${r.dup ? ' · zaten ekli' : ''}</small></span>
               <span class="row-side">
                 <span class="row-amt">${esc(money(r.amount))}</span>
-                <select data-cat="${i}" aria-label="Kategori">${cats.map((c) => `<option value="${c.id}" ${c.id === r.categoryId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>
+                ${r.income ? '<span class="tag-income">gelir</span>' : `<select data-cat="${i}" aria-label="Kategori">${cats.map((c) => `<option value="${c.id}" ${c.id === r.categoryId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select>`}
               </span>
             </div>`
           )
           .join('')}
       </div>
-      <button class="primary go" type="button" ${n ? '' : 'disabled'}>${n} harcamayı ekle · ${esc(money(total))}</button>`;
+      <button class="primary go" type="button" ${n ? '' : 'disabled'}>${n ? `${label} ekle` : 'Seçili satır yok'}</button>`;
   };
 
   $('.parse').addEventListener('click', () => {
@@ -706,15 +836,19 @@ export function openImportSheet(ctx) {
     ctx.commit(
       (s) => {
         for (const r of chosen) {
+          if (r.income) {
+            (s.incomes = s.incomes || []).push({ id: uid(), title: r.title, amount: r.amount, date: new Date(r.date).toISOString() });
+            continue;
+          }
           const suggested = categorize(r.title, s.categories);
           if (suggested?.id !== r.categoryId) learn(r.title, byId(s.categories, r.categoryId), s.categories);
           s.expenses.push({ id: uid(), title: r.title, amount: r.amount, date: new Date(r.date).toISOString(), categoryId: r.categoryId });
-          if (!lastDate || r.date > lastDate) lastDate = r.date;
         }
+        for (const r of chosen) if (!lastDate || r.date > lastDate) lastDate = r.date;
       },
       { focusDate: lastDate }
     );
-    toast(`${chosen.length} harcama eklendi`);
+    toast(`${chosen.length} hareket eklendi`);
     sheet.close();
   });
 

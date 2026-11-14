@@ -1690,3 +1690,72 @@ details.edit[open] summary::after {
   color: #fff;
   border-color: transparent;
 }
+
+/* ---------- Harcama / Gelir ---------- */
+
+.seg {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 14px;
+  background: var(--field);
+}
+
+.seg button {
+  min-height: 38px;
+  border-radius: 10px;
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--muted);
+  transition: background 0.2s, color 0.2s;
+}
+
+.seg button.on {
+  background: var(--surface-2);
+  color: var(--text);
+  box-shadow: 0 2px 8px -2px rgba(0, 0, 0, 0.35);
+}
+
+.is-income .seg button.on {
+  background: var(--good);
+  color: #fff;
+}
+
+.is-income .exp-only {
+  display: none;
+}
+
+.is-income .primary {
+  background: linear-gradient(140deg, #3ee07a, #1fa84f);
+  box-shadow: 0 12px 28px -12px rgba(48, 209, 88, 0.8);
+}
+
+.exp-only {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.plus,
+.row-amt.plus {
+  color: var(--good);
+  font-style: normal;
+}
+
+.row.income .row-icon .ci {
+  color: var(--good);
+}
+
+.tag-income {
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: 8px;
+  color: var(--good);
+  background: color-mix(in srgb, var(--good) 15%, transparent);
+}
+
+.add-income {
+  margin: 8px 0 4px;
+}

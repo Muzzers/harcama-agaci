@@ -33,10 +33,6 @@ export const DEFAULT_CATEGORIES = [
     keywords: ['sinema', 'netflix', 'spotify', 'youtube', 'disney', 'exxen', 'blutv', 'amazon prime', 'steam', 'playstation', 'xbox', 'konser', 'biletix', 'passo', 'tiyatro', 'oyun', 'bowling', 'kitap', 'dergi'],
   },
   {
-    name: 'Sağlık', icon: 'heart', color: '#64D2FF', limit: 1000,
-    keywords: ['eczane', 'hastane', 'doktor', 'dişçi', 'diş hekimi', 'poliklinik', 'muayene', 'ilaç', 'vitamin', 'spor salonu', 'macfit', 'gym', 'berber', 'kuaför'],
-  },
-  {
     name: 'Diğer', icon: 'dots', color: '#8E8E93', limit: 1000, keywords: [], fallback: true,
   },
 ];
@@ -49,10 +45,11 @@ export function uid() {
 export function freshState() {
   return {
     version: 1,
-    settings: { salary: 0, payday: 15, onboarded: false },
+    settings: { salary: 0, payday: 15, onboarded: false, removedHealth: true },
     categories: DEFAULT_CATEGORIES.map((c, i) => ({ id: uid(), order: i, fallback: false, ...c, keywords: [...c.keywords] })),
     fixed: [],
     expenses: [],
+    incomes: [],
   };
 }
 
@@ -78,8 +75,21 @@ function migrate(s) {
           .map((e) => ({ id: e.id || uid(), title: String(e.title || 'Harcama'), amount: Number(e.amount), date: new Date(e.date).toISOString(), categoryId: e.categoryId || null }))
       : [],
   };
+  out.incomes = Array.isArray(s.incomes)
+    ? s.incomes
+        .filter((i) => i && Number(i.amount) > 0 && !isNaN(new Date(i.date)))
+        .map((i) => ({ id: i.id || uid(), title: String(i.title || 'Gelir'), amount: Number(i.amount), date: new Date(i.date).toISOString() }))
+    : [];
   if (!out.categories.some((c) => c.fallback)) {
     out.categories.push({ id: uid(), name: 'Diğer', icon: 'dots', color: '#8E8E93', limit: 0, keywords: [], order: out.categories.length, fallback: true });
+  }
+  // Tek seferlik: kullanılmayan varsayılan "Sağlık" kategorisini kaldır.
+  if (!out.settings.removedHealth) {
+    const health = out.categories.find((c) => c.name === 'Sağlık' && !c.fallback);
+    if (health && !out.expenses.some((e) => e.categoryId === health.id)) {
+      out.categories = out.categories.filter((c) => c !== health);
+    }
+    out.settings.removedHealth = true;
   }
   const ids = new Set(out.categories.map((c) => c.id));
   const fb = out.categories.find((c) => c.fallback).id;
